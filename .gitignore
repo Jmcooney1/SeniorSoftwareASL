@@ -2,3 +2,5 @@ venv/
 env/
 mp_env/
 .venv/
+.env.*
+myenv/
