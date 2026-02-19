@@ -1,26 +1,38 @@
-#python 3.10
+#python 3.10, for Windoes
 bsl-py==2.4.0
 attrs==25.4.0
+certifi==2026.1.4
 cffi==2.0.0
+charset-normalizer==3.4.4
 contourpy==1.3.2
 cycler==0.12.1
 flatbuffers==25.12.19
 fonttools==4.61.1
+idna==3.11
+jax==0.6.2
+jaxlib==0.6.2
+joblib==1.5.3
 kiwisolver==1.4.9
 matplotlib==3.10.8
-mediapipe==0.10.9
-numpy==2.2.6
+mediapipe==0.10.11
+ml_dtypes==0.5.4
+numpy==2.1.3
 opencv-contrib-python==4.13.0.92
 opencv-python==4.13.0.92
+opt_einsum==3.4.0
 packaging==26.0
 pillow==12.1.1
 protobuf==3.20.3
 pycparser==3.0
 pyparsing==3.3.2
 python-dateutil==2.9.0.post0
-setuptools==80.10.2
+requests==2.32.5
+scikit-learn==1.7.2
+scipy==1.15.3
 six==1.17.0
 sounddevice==0.5.5
+threadpoolctl==3.6.0
+urllib3==2.6.3
 
 
 
