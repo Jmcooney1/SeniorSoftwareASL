@@ -4,3 +4,4 @@ mp_env/
 .venv/
 .env.*
 myenv/
+.env/
