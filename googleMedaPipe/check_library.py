@@ -1,19 +1,38 @@
 import numpy as np
+import os
 
-# Load the library
-try:
-    asl_library = np.load('asl_library.npy', allow_pickle=True).item()
-    
-    print("--- ASL LIBRARY CONTENTS ---")
-    print(f"Total letters saved: {len(asl_library)}")
-    print("-" * 30)
-    
-    # Sort them alphabetically for a cleaner look
-    for letter in sorted(asl_library.keys()):
-        data_points = asl_library[letter].shape[0]
-        print(f"Letter: {letter.upper()} | Points: {data_points} (63 is perfect)")
+library_path = 'asl_library.npy'
 
-except FileNotFoundError:
-    print("❌ Error: 'asl_library.npy' does not exist yet. Run create_library.py first!")
-except Exception as e:
-    print(f"❌ Error loading file: {e}")
+if not os.path.exists(library_path):
+    print(f"❌ Error: '{library_path}' not found. Run your recorder first!")
+else:
+    # Load the library
+    asl_library = np.load(library_path, allow_pickle=True).item()
+    
+    alphabet = "abcdefghijklmnopqrstuvwxyz"
+    recorded_keys = sorted(asl_library.keys())
+    
+    print(f"--- ASL LIBRARY STATUS REPORT ---")
+    print(f"Total Variations Saved: {len(recorded_keys)}\n")
+
+    missing = []
+    
+    # Check each letter of the alphabet
+    for letter in alphabet:
+        # Find all keys that start with this letter (e.g., 'a_left_front', 'a_right_side')
+        variations = [k for k in recorded_keys if k.startswith(letter)]
+        
+        if variations:
+            # Join the variations for a clean display
+            var_list = ", ".join(variations)
+            print(f"✅ {letter.upper()}: {len(variations)} variations found ({var_list})")
+        else:
+            print(f"❌ {letter.upper()}: MISSING")
+            missing.append(letter.upper())
+
+    print("\n" + "="*30)
+    if not missing:
+        print("🎉 CONGRATS! You have at least one version of every letter.")
+    else:
+        print(f"⚠️ STILL NEEDED: {', '.join(missing)}")
+    print("="*30)
