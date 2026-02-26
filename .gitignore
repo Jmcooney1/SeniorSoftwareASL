@@ -5,3 +5,4 @@ mp_env/
 .env.*
 myenv/
 dataSet/
+/savedVideoPoints

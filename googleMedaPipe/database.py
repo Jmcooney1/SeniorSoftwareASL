@@ -61,7 +61,7 @@ class DataBase:
             print(
                 f"Dictionary built successfully. "
                 f"{len(self.word_to_path)} entries added. "
-                f"{len(self.missing_words)} missing words."
+                #f"{len(self.missing_words)} missing words."
             )
 
         except FileNotFoundError:
@@ -70,11 +70,11 @@ class DataBase:
             print(f"An error occurred: {e}")
 
     def get_video_path(self, word: str) -> str:
-        
+        '''
         if word in self.missing_words:
             print(f"Warning: The word '{word}' is marked as missing.")
             return None
-
+        '''
         video_index = self.word_to_path.get(word)
 
         if video_index is None:
