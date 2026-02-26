@@ -1,100 +1,64 @@
 import cv2
+import csv
+import numpy as np
+from collections import defaultdict
 import mediapipe as mp
-mp_drawing = mp.solutions.drawing_utils
-mp_drawing_styles = mp.solutions.drawing_styles
-mp_face_mesh = mp.solutions.face_mesh
 
-# For static images:
-IMAGE_FILES = []
-drawing_spec = mp_drawing.DrawingSpec(thickness=1, circle_radius=1)
-with mp_face_mesh.FaceMesh(
-    static_image_mode=True,
-    max_num_faces=1,
-    refine_landmarks=True,
-    min_detection_confidence=0.5) as face_mesh:
-  for idx, file in enumerate(IMAGE_FILES):
-    image = cv2.imread(file)
-    # Convert the BGR image to RGB before processing.
-    results = face_mesh.process(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+# ========== SETTINGS ==========
+pose_csv_path = "./savedVideoPoints/pose/pose_output.csv"
+canvas_width = 1280
+canvas_height = 720
+fps = 30
+# ==============================
 
-    # Print and draw face mesh landmarks on the image.
-    if not results.multi_face_landmarks:
-      continue
-    annotated_image = image.copy()
-    for face_landmarks in results.multi_face_landmarks:
-      print('face_landmarks:', face_landmarks)
-      mp_drawing.draw_landmarks(
-          image=annotated_image,
-          landmark_list=face_landmarks,
-          connections=mp_face_mesh.FACEMESH_TESSELATION,
-          landmark_drawing_spec=None,
-          connection_drawing_spec=mp_drawing_styles
-          .get_default_face_mesh_tesselation_style())
-      mp_drawing.draw_landmarks(
-          image=annotated_image,
-          landmark_list=face_landmarks,
-          connections=mp_face_mesh.FACEMESH_CONTOURS,
-          landmark_drawing_spec=None,
-          connection_drawing_spec=mp_drawing_styles
-          .get_default_face_mesh_contours_style())
-      mp_drawing.draw_landmarks(
-          image=annotated_image,
-          landmark_list=face_landmarks,
-          connections=mp_face_mesh.FACEMESH_IRISES,
-          landmark_drawing_spec=None,
-          connection_drawing_spec=mp_drawing_styles
-          .get_default_face_mesh_iris_connections_style())
-    cv2.imwrite('/tmp/annotated_image' + str(idx) + '.png', annotated_image)
+mp_pose = mp.solutions.pose
 
-# For webcam input:
-drawing_spec = mp_drawing.DrawingSpec(thickness=1, circle_radius=1)
-cap = cv2.VideoCapture(0)
-with mp_face_mesh.FaceMesh(
-    max_num_faces=1,
-    refine_landmarks=True,
-    min_detection_confidence=0.5,
-    min_tracking_confidence=0.5) as face_mesh:
-  while cap.isOpened():
-    success, image = cap.read()
-    if not success:
-      print("Ignoring empty camera frame.")
-      # If loading a video, use 'break' instead of 'continue'.
-      continue
+# Group landmarks by frame
+frames = defaultdict(dict)
 
-    # To improve performance, optionally mark the image as not writeable to
-    # pass by reference.
-    image.flags.writeable = False
-    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    results = face_mesh.process(image)
+with open(pose_csv_path, "r") as f:
+    reader = csv.reader(f)
+    next(reader)  # skip header
+    for row in reader:
+        frame_idx = int(row[0])
+        landmark_idx = int(row[1])
+        x = float(row[2])
+        y = float(row[3])
+        z = float(row[4])
+        frames[frame_idx][landmark_idx] = (x, y, z)
 
-    # Draw the face mesh annotations on the image.
-    image.flags.writeable = True
-    image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-    if results.multi_face_landmarks:
-      for face_landmarks in results.multi_face_landmarks:
-        mp_drawing.draw_landmarks(
-            image=image,
-            landmark_list=face_landmarks,
-            connections=mp_face_mesh.FACEMESH_TESSELATION,
-            landmark_drawing_spec=None,
-            connection_drawing_spec=mp_drawing_styles
-            .get_default_face_mesh_tesselation_style())
-        mp_drawing.draw_landmarks(
-            image=image,
-            landmark_list=face_landmarks,
-            connections=mp_face_mesh.FACEMESH_CONTOURS,
-            landmark_drawing_spec=None,
-            connection_drawing_spec=mp_drawing_styles
-            .get_default_face_mesh_contours_style())
-        mp_drawing.draw_landmarks(
-            image=image,
-            landmark_list=face_landmarks,
-            connections=mp_face_mesh.FACEMESH_IRISES,
-            landmark_drawing_spec=None,
-            connection_drawing_spec=mp_drawing_styles
-            .get_default_face_mesh_iris_connections_style())
-    # Flip the image horizontally for a selfie-view display.
-    cv2.imshow('MediaPipe Face Mesh', cv2.flip(image, 1))
-    if cv2.waitKey(5) & 0xFF == 27:
-      break
-cap.release()
+# Animate
+sorted_frames = sorted(frames.keys())
+
+for frame_idx in sorted_frames:
+
+    # Create black canvas
+    canvas = np.zeros((canvas_height, canvas_width, 3), dtype=np.uint8)
+
+    landmarks = frames[frame_idx]
+
+    # Draw connections
+    for connection in mp_pose.POSE_CONNECTIONS:
+        start_idx, end_idx = connection
+        if start_idx in landmarks and end_idx in landmarks:
+
+            x1 = int(landmarks[start_idx][0] * canvas_width)
+            y1 = int(landmarks[start_idx][1] * canvas_height)
+
+            x2 = int(landmarks[end_idx][0] * canvas_width)
+            y2 = int(landmarks[end_idx][1] * canvas_height)
+
+            cv2.line(canvas, (x1, y1), (x2, y2), (0, 255, 0), 2)
+
+    # Draw points
+    for lm_idx in landmarks:
+        x = int(landmarks[lm_idx][0] * canvas_width)
+        y = int(landmarks[lm_idx][1] * canvas_height)
+        cv2.circle(canvas, (x, y), 5, (0, 255, 0), -1)
+
+    cv2.imshow("Projected Skeleton", canvas)
+
+    if cv2.waitKey(int(1000 / fps)) & 0xFF == 27:
+        break
+
+cv2.destroyAllWindows()
