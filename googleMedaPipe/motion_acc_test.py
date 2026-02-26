@@ -7,76 +7,88 @@ from scipy.spatial.distance import euclidean
 
 # --- CONFIG ---
 MOTION_LIB_PATH = 'asl_motion_library.npy'
+BUFFER_SIZE = 40
+THRESHOLD = 1500 
 
-# Load the library
 if not os.path.exists(MOTION_LIB_PATH):
-    print("❌ Motion library not found!")
+    print("❌ Library not found!")
     exit()
+
 motion_lib = np.load(MOTION_LIB_PATH, allow_pickle=True).item()
 
-# --- MEDIAPIPE SETUP ---
 mp_hands = mp.solutions.hands
-hands = mp_hands.Hands(model_complexity=1, min_detection_confidence=0.7, max_num_hands=1)
+hands = mp_hands.Hands(model_complexity=0, min_detection_confidence=0.8, max_num_hands=1)
 mp_draw = mp.solutions.drawing_utils
 
 cap = cv2.VideoCapture(0)
-buffer_size = 60 # We look at the last ~3 seconds of movement
 motion_buffer = []
 
-print("--- MOTION ACCURACY TESTER ---")
-print("Perform a motion (J or Z) and the AI will check the similarity score.")
+def is_finger_up(hand_landmarks, finger_tip_id, finger_pip_id):
+    """Returns True if the finger tip is above the PIP joint (finger is extended)"""
+    return hand_landmarks.landmark[finger_tip_id].y < hand_landmarks.landmark[finger_pip_id].y
 
 while True:
     success, frame = cap.read()
     if not success: break
     frame = cv2.flip(frame, 1)
-    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    results = hands.process(rgb_frame)
+    results = hands.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+
+    best_match = "None"
+    lowest_dist = float('inf')
+    status_msg = "Searching..."
 
     if results.multi_hand_landmarks:
-        # 1. Capture current frame data
-        pts = np.array([[lm.x, lm.y, lm.z] for lm in results.multi_hand_landmarks[0].landmark])
-        normalized = (pts - pts[0]).flatten()
+        hand_lms = results.multi_hand_landmarks[0]
+        current_side = results.multi_handedness[0].classification[0].label.lower()
         
-        # 2. Add to a rolling "buffer" 
+        # --- FINGER GATE LOGIC ---
+        # Index Tip = 8, Index PIP = 6
+        index_up = is_finger_up(hand_lms, 8, 6)
+        # Pinky Tip = 20, Pinky PIP = 18
+        pinky_up = is_finger_up(hand_lms, 20, 18)
+
+        # Normalize and Buffer
+        pts = np.array([[lm.x, lm.y, lm.z] for lm in hand_lms.landmark])
+        wrist = pts[0]
+        scale = np.linalg.norm(pts[0] - pts[5])
+        normalized = ((pts - wrist) / scale).flatten()
+        
         motion_buffer.append(normalized)
-        if len(motion_buffer) > buffer_size:
-            motion_buffer.pop(0)
-        
-        mp_draw.draw_landmarks(frame, results.multi_hand_landmarks[0], mp_hands.HAND_CONNECTIONS)
+        if len(motion_buffer) > BUFFER_SIZE: motion_buffer.pop(0)
 
-    # 3. Compare buffer against every saved motion in the library
-    best_match = "None"
-    lowest_distance = float('inf')
+        mp_draw.draw_landmarks(frame, hand_lms, mp_hands.HAND_CONNECTIONS)
 
-    if len(motion_buffer) > 20: 
-        current_sequence = np.array(motion_buffer)
-        
-        for name, saved_sequence in motion_lib.items():
-            # Use DTW to find the distance
-            distance, _ = fastdtw(current_sequence, saved_sequence, dist=euclidean)
+        # Only compare if we have enough data
+        if len(motion_buffer) >= 20:
+            current_seq = np.array(motion_buffer)[::2]
             
-            if distance < lowest_distance:
-                lowest_distance = distance
-                best_match = name
+            for name, saved_seq in motion_lib.items():
+                # GATE 1: Must match Left/Right side
+                if current_side in name.lower():
+                    
+                    # GATE 2: If Index is up, ONLY check for 'Z'
+                    if index_up and 'z' in name.lower():
+                        dist, _ = fastdtw(current_seq, saved_seq[::2], radius=1, dist=euclidean)
+                        if dist < lowest_dist:
+                            lowest_dist, best_match = dist, name
+                    
+                    # GATE 3: If Pinky is up, ONLY check for 'J'
+                    elif pinky_up and 'j' in name.lower():
+                        dist, _ = fastdtw(current_seq, saved_seq[::2], radius=1, dist=euclidean)
+                        if dist < lowest_dist:
+                            lowest_dist, best_match = dist, name
 
-    # 4. Display Results (FIXED INDENTATION AND OVERFLOW)
-    accuracy_text = f"Best Match: {best_match.upper()}"
-    
-    if lowest_distance == float('inf'):
-        score_text = "Distance Score: N/A"
+    # --- UI Logic ---
+    if lowest_dist < THRESHOLD:
+        color = (0, 255, 0)
+        display_text = best_match.upper()
     else:
-        score_text = f"Distance Score: {int(lowest_distance)}"
-    
-    # Text displays
-    cv2.putText(frame, accuracy_text, (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-    cv2.putText(frame, score_text, (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-    
-    cv2.imshow('Accuracy Test', frame)
-    
-    # Use 'q' to quit the window
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        break
+        color = (0, 0, 255)
+        display_text = "SIGNING..."
+
+    cv2.putText(frame, f"DETECTED: {display_text}", (10, 50), 1, 2, color, 2)
+    cv2.imshow('ASL Finger-Gated Test', frame)
+    if cv2.waitKey(1) & 0xFF == 27: break
 
 cap.release()
 cv2.destroyAllWindows()

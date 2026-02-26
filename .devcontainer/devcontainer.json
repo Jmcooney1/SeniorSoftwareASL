@@ -1,0 +1,15 @@
+{
+    "name": "ASL Senior Project DevEnv",
+    "dockerFile": "../Dockerfile",
+    "customizations": {
+        "vscode": {
+            "extensions": ["ms-python.python", "ms-python.vscode-pylance"]
+        }
+    },
+    "runArgs": [
+        "--device=/dev/video0", // Maps webcam
+        "--net=host",           // Helps with display
+        "--privileged"          // Necessary for hardware access
+    ],
+    "containerEnv": { "DISPLAY": "${localEnv:DISPLAY}" }
+}
