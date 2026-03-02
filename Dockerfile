@@ -12,6 +12,11 @@ RUN apt-get update && apt-get install -y \
     libsm6 \
     libxext6 \
     libxrender-dev \
+    # Added X11/Qt libraries for the GUI window to work
+    libxcb-xinerama0 \
+    libqt5gui5 \
+    libx11-xcb1 \
+    libxkbcommon-x11-0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Set the working directory
@@ -23,8 +28,10 @@ COPY requirements.txt .
 # Install Python libraries
 RUN pip install --no-cache-dir -r requirements.txt
 
+ENV DISPLAY=host.docker.internal:0.0
+
 # Copy your project files
 COPY . .
 
 # This keeps the container alive
-CMD ["python", "motion_acc_test.py"]
+CMD ["sleep", "infinity"]

@@ -13,11 +13,28 @@ mp_hands = mp.solutions.hands
 hands = mp_hands.Hands(static_image_mode=False, max_num_hands=1, min_detection_confidence=0.7)
 mp_draw = mp.solutions.drawing_utils
 
+# --- DOCKER & WSL OPTIMIZED CAMERA SETUP ---
 cap = cv2.VideoCapture(0)
 
+# 1. Force MJPEG to prevent 'select() timeout'
+cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+cap.set(cv2.CAP_PROP_FPS, 30)
+cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+# 2. Initialize X11 Window for Docker visibility
+cv2.namedWindow('ASL Real-Time Recognition', cv2.WINDOW_NORMAL)
+cv2.resizeWindow('ASL Real-Time Recognition', 960, 720)
+
+print("✅ Accuracy Test started. Looking for matches...")
+
 while cap.isOpened():
-    ret, frame = cap.read()
-    if not ret: break
+    success, frame = cap.read()
+    if not success:
+        print("⚠️ Failed to grab frame. Check camera connection.")
+        break
+        
     frame = cv2.flip(frame, 1)
     rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     results = hands.process(rgb_frame)
@@ -51,25 +68,30 @@ while cap.isOpened():
                 best_match = letter
 
         # 3. VISUAL FEEDBACK
-        # Draw the skeleton
         mp_draw.draw_landmarks(frame, hand_lms, mp_hands.HAND_CONNECTIONS)
         
-        # Display the result
+        # Set color based on confidence (Green > 90%, Yellow otherwise)
         color = (0, 255, 0) if highest_accuracy > 90 else (0, 255, 255)
         
         # Extract base letter name (e.g., 'a_front' becomes 'A')
         display_name = best_match.split('_')[0].upper()
         
-        cv2.putText(frame, f"PREDICTION: {display_name}", (10, 50), 
+        # Visual text overlays
+        cv2.putText(frame, f"PREDICTION: {display_name}", (10, 60), 
                     cv2.FONT_HERSHEY_SIMPLEX, 1.2, color, 3)
-        cv2.putText(frame, f"Match: {highest_accuracy:.1f}%", (10, 90), 
+        cv2.putText(frame, f"Match: {highest_accuracy:.1f}%", (10, 110), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
 
+    # Show the result in the resized window
     cv2.imshow('ASL Real-Time Recognition', frame)
     
-    # Press ESC to quit
-    if cv2.waitKey(1) & 0xFF == 27: 
+# FIX: Check if the user pressed ESC OR clicked the 'X' on the window
+    key = cv2.waitKey(1) & 0xFF
+    if key == 27 or cv2.getWindowProperty('ASL Real-Time Recognition', cv2.WND_PROP_VISIBLE) < 1: 
         break
 
+# Proper Cleanup
+print("Closing camera and cleaning up...")
 cap.release()
 cv2.destroyAllWindows()
+cv2.waitKey(1) # Extra kick to help X11 close the window

@@ -5,3 +5,8 @@ mp_env/
 .env.*
 myenv/
 .env/
+
+#docker stuff 
+.DS_Store
+*.log
+
