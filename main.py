@@ -2,10 +2,12 @@ import sys
 import os
 import re
 import shutil
+import time
 import cv2
 import numpy as np
+import csv
 
-SCRIPT_DIR           = os.path.dirname(os.path.abspath(__file__))
+SCRIPT_DIR            = os.path.dirname(os.path.abspath(__file__))
 GOOGLE_MEDIA_PIPE_DIR = os.path.join(SCRIPT_DIR, "googleMedaPipe")
 sys.path.insert(0, GOOGLE_MEDIA_PIPE_DIR)
 
@@ -20,40 +22,42 @@ from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt6.QtGui import QColor, QImage, QPixmap
 
 from database import DataBase
-from SkeletonExtractor import SkeletonExtractor
 import projectPoints as projectPoints
 import mediapipe as mp
 
 # ── Paths ──────────────────────────────────────────────────────────────────
-DB_PATH      = "/Users/kilyjasso/Desktop/dataSet/wlasl-complete"
+DB_PATH      = "./dataSet/wlasl-complete"
 VIDEO_FOLDER = os.path.join(DB_PATH, "videos")
 VIDEO_INDEX  = os.path.join(DB_PATH, "wlasl_class_list.txt")
 SAVE_DIR     = os.path.join(SCRIPT_DIR, "googleMedaPipe", "savedVideoPoints")
 
+PREVIEW_W    = 480
+PREVIEW_H    = 320
+TARGET_FPS   = 30   # how fast to emit frames to the GUI
 
-# ── Helpers ────────────────────────────────────────────────────────────────
-def numpy_to_pixmap(frame_bgr, w, h):
-    """Convert an OpenCV BGR frame to a QPixmap scaled to (w, h)."""
-    rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-    rgb = cv2.resize(rgb, (w, h))
-    img = QImage(rgb.data, w, h, w * 3, QImage.Format.Format_RGB888)
+
+# ── Frame conversion ───────────────────────────────────────────────────────
+def bgr_to_pixmap(frame_bgr, w, h):
+    rgb   = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+    rgb   = cv2.resize(rgb, (w, h), interpolation=cv2.INTER_LINEAR)
+    img   = QImage(rgb.data.tobytes(), w, h, w * 3, QImage.Format.Format_RGB888)
     return QPixmap.fromImage(img)
 
 
 # ── Worker Thread ──────────────────────────────────────────────────────────
 class WorkerThread(QThread):
-    log_signal        = pyqtSignal(str)
-    done_signal       = pyqtSignal()
-    # emits (raw_bgr_frame, skeleton_bgr_frame, word_label)
-    frame_signal      = pyqtSignal(object, object, str)
+    log_signal   = pyqtSignal(str)
+    done_signal  = pyqtSignal()
+    # carries copies so the main thread can paint safely
+    frame_signal = pyqtSignal(np.ndarray, np.ndarray, str)
 
     def __init__(self, sentence: str, db: DataBase):
         super().__init__()
         self.sentence = sentence
         self.db       = db
 
-    # ── internal: extract skeleton AND emit frames for live preview ──
-    def _extract_with_preview(self, word: str, video_path: str):
+    # ── per-word extraction with live preview ─────────────────────────────
+    def _extract(self, word: str, video_path: str):
         mp_drawing        = mp.solutions.drawing_utils
         mp_drawing_styles = mp.solutions.drawing_styles
         mp_hands_mod      = mp.solutions.hands
@@ -66,50 +70,51 @@ class WorkerThread(QThread):
 
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
-            self.log_signal.emit(f"❌ Could not open video: {video_path}")
+            self.log_signal.emit(f"❌ Cannot open: {video_path}")
             return
 
-        hands = mp_hands_mod.Hands(
+        # Read video FPS so we can pace emission correctly
+        video_fps = cap.get(cv2.CAP_PROP_FPS) or 30
+        frame_delay = 1.0 / min(TARGET_FPS, video_fps)
+
+        POSE_LMS = list(range(0, 17)) + [23, 24]
+
+        hands_mp = mp_hands_mod.Hands(
             model_complexity=0, max_num_hands=2,
             min_detection_confidence=0.5, min_tracking_confidence=0.5
         )
-        pose = mp_pose_mod.Pose(
+        pose_mp = mp_pose_mod.Pose(
             model_complexity=2, enable_segmentation=False,
             min_detection_confidence=0.5, min_tracking_confidence=0.5
         )
 
-        import csv
-        POSE_LMS = list(range(0, 17)) + [23, 24]
-
-        hand_csv     = open(os.path.join(word_dir, "hands",    "hands_output.csv"),    "w", newline="")
-        pose_csv     = open(os.path.join(word_dir, "pose",     "pose_output.csv"),     "w", newline="")
-        combined_csv = open(os.path.join(word_dir, "combined", "combined_output.csv"), "w", newline="")
-
-        hw = csv.writer(hand_csv)
-        pw = csv.writer(pose_csv)
-        cw = csv.writer(combined_csv)
-
-        hw.writerow(["frame", "hand_index", "landmark_index", "x", "y", "z"])
-        pw.writerow(["frame", "landmark_index", "x", "y", "z"])
+        hf = open(os.path.join(word_dir, "hands",    "hands_output.csv"),    "w", newline="")
+        pf = open(os.path.join(word_dir, "pose",     "pose_output.csv"),     "w", newline="")
+        cf = open(os.path.join(word_dir, "combined", "combined_output.csv"), "w", newline="")
+        hw = csv.writer(hf); pw = csv.writer(pf); cw = csv.writer(cf)
+        hw.writerow(["frame","hand_index","landmark_index","x","y","z"])
+        pw.writerow(["frame","landmark_index","x","y","z"])
         cw.writerow(["frame",
-                     "hand_index", "hand_landmark_index", "hand_x", "hand_y", "hand_z",
-                     "pose_landmark_index", "pose_x", "pose_y", "pose_z"])
+                     "hand_index","hand_landmark_index","hand_x","hand_y","hand_z",
+                     "pose_landmark_index","pose_x","pose_y","pose_z"])
 
-        frame_idx = 0
+        frame_idx   = 0
+        last_emit   = 0.0
+
         while cap.isOpened():
             ret, frame = cap.read()
             if not ret:
                 break
 
             rgb          = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            hand_results = hands.process(rgb)
-            pose_results = pose.process(rgb)
+            hand_results = hands_mp.process(rgb)
+            pose_results = pose_mp.process(rgb)
 
-            # ── Raw frame with MediaPipe overlay ──
-            raw_display = frame.copy()
+            # ── Build raw display (video + mediapipe overlay) ──
+            raw = frame.copy()
             if pose_results and pose_results.pose_landmarks:
                 mp_drawing.draw_landmarks(
-                    raw_display,
+                    raw,
                     pose_results.pose_landmarks,
                     mp_pose_mod.POSE_CONNECTIONS,
                     landmark_drawing_spec=mp_drawing_styles.get_default_pose_landmarks_style()
@@ -117,13 +122,13 @@ class WorkerThread(QThread):
             if hand_results and hand_results.multi_hand_landmarks:
                 for hl in hand_results.multi_hand_landmarks:
                     mp_drawing.draw_landmarks(
-                        raw_display, hl,
+                        raw, hl,
                         mp_hands_mod.HAND_CONNECTIONS,
                         landmark_drawing_spec=mp_drawing_styles.get_default_hand_landmarks_style(),
                         connection_drawing_spec=mp_drawing_styles.get_default_hand_connections_style()
                     )
 
-            # ── Skeleton-only frame ──
+            # ── Build skeleton-only display ──
             h, w = frame.shape[:2]
             skel = np.zeros((h, w, 3), dtype=np.uint8)
             if pose_results and pose_results.pose_landmarks:
@@ -142,9 +147,13 @@ class WorkerThread(QThread):
                         connection_drawing_spec=mp_drawing_styles.get_default_hand_connections_style()
                     )
 
-            self.frame_signal.emit(raw_display.copy(), skel.copy(), word)
+            # ── Throttled emit so GUI can keep up ──
+            now = time.monotonic()
+            if now - last_emit >= frame_delay:
+                self.frame_signal.emit(raw.copy(), skel.copy(), word)
+                last_emit = now
 
-            # ── Save CSVs ──
+            # ── Save CSV data ──
             if hand_results and hand_results.multi_hand_landmarks:
                 for hi, hl in enumerate(hand_results.multi_hand_landmarks):
                     for li, lm in enumerate(hl.landmark):
@@ -162,14 +171,12 @@ class WorkerThread(QThread):
             frame_idx += 1
 
         cap.release()
-        hand_csv.close()
-        pose_csv.close()
-        combined_csv.close()
-        hands.close()
-        pose.close()
+        hf.close(); pf.close(); cf.close()
+        hands_mp.close(); pose_mp.close()
 
+    # ── Main run loop ─────────────────────────────────────────────────────
     def run(self):
-        # Clear previous output
+        # Clear previous saves
         if os.path.exists(SAVE_DIR):
             for item in os.listdir(SAVE_DIR):
                 p = os.path.join(SAVE_DIR, item)
@@ -177,17 +184,17 @@ class WorkerThread(QThread):
 
         words = [w for w in re.split(r'[;,\s]+', self.sentence.strip()) if w]
 
-        # Phase 1: extract skeleton + live preview
+        # Phase 1 — extract + live preview
         for word in words:
             video_path = self.db.get_video_path(word)
             if video_path is None or "Warning" in str(video_path):
                 self.log_signal.emit(f"⚠️  '{word}' — not in database, skipping.")
                 continue
             self.log_signal.emit(f"▶  Extracting: {word}")
-            self._extract_with_preview(word, video_path)
-            self.log_signal.emit(f"✅  Done extracting: {word}")
+            self._extract(word, video_path)
+            self.log_signal.emit(f"✅  Saved: {word}")
 
-        # Phase 2: project points
+        # Phase 2 — project points (plays its own cv2 window)
         for word in words:
             word_dir = os.path.join(SAVE_DIR, word)
             if os.path.isdir(word_dir):
@@ -205,7 +212,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("ASL Skeleton Translator")
-        self.setMinimumSize(1200, 750)
+        self.setMinimumSize(1200, 780)
         self.db = None
         self._build_ui()
         QTimer.singleShot(100, self._load_database)
@@ -248,69 +255,71 @@ class MainWindow(QMainWindow):
         row.addWidget(self.run_btn)
         root.addLayout(row)
 
-        # ── Tabs ──
+        # ── Tabs ──────────────────────────────────────────────────────────
         tabs = QTabWidget()
-        tabs.setStyleSheet("QTabBar::tab { padding:6px 16px; font-size:13px; }")
+        tabs.setStyleSheet("QTabBar::tab { padding:6px 18px; font-size:13px; }")
 
-        # Tab 1: Live Preview
+        # ── Tab 1: Live Preview ──
         preview_widget = QWidget()
-        preview_layout = QVBoxLayout(preview_widget)
-        preview_layout.setContentsMargins(8, 8, 8, 8)
+        pv = QVBoxLayout(preview_widget)
+        pv.setContentsMargins(8, 8, 8, 8)
+        pv.setSpacing(8)
 
-        self.word_label = QLabel("Waiting…")
+        self.word_label = QLabel("Waiting for input…")
         self.word_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.word_label.setStyleSheet("font-size:16px; font-weight:bold; padding:4px;")
-        preview_layout.addWidget(self.word_label)
+        self.word_label.setStyleSheet(
+            "font-size:17px; font-weight:bold; padding:4px; color:#1d4ed8;"
+        )
+        pv.addWidget(self.word_label)
 
         video_row = QHBoxLayout()
+        video_row.setSpacing(16)
 
-        # Raw + mediapipe
-        left_col = QVBoxLayout()
-        lbl_raw = QLabel("📷  Camera / Video + MediaPipe")
-        lbl_raw.setStyleSheet("font-weight:bold; font-size:12px;")
-        lbl_raw.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.raw_label = QLabel()
-        self.raw_label.setFixedSize(480, 320)
-        self.raw_label.setStyleSheet("background:black; border:1px solid #333;")
-        self.raw_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        left_col.addWidget(lbl_raw)
-        left_col.addWidget(self.raw_label)
-        video_row.addLayout(left_col)
+        for attr, heading in [("raw_label",  "📷  Video + MediaPipe Landmarks"),
+                               ("skel_label", "🦴  Skeleton Projection")]:
+            col = QVBoxLayout()
+            col.setSpacing(4)
+            h = QLabel(heading)
+            h.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            h.setStyleSheet("font-weight:bold; font-size:12px; color:#374151;")
+            lbl = QLabel()
+            lbl.setFixedSize(PREVIEW_W, PREVIEW_H)
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lbl.setStyleSheet(
+                "background:#111; border:2px solid #374151; border-radius:6px;"
+            )
+            lbl.setText("No signal")
+            lbl.setStyleSheet(
+                "background:#111; border:2px solid #374151; border-radius:6px;"
+                "color:#555; font-size:14px;"
+            )
+            setattr(self, attr, lbl)
+            col.addWidget(h)
+            col.addWidget(lbl)
+            video_row.addLayout(col)
 
-        # Skeleton only
-        right_col = QVBoxLayout()
-        lbl_skel = QLabel("🦴  Skeleton Projection")
-        lbl_skel.setStyleSheet("font-weight:bold; font-size:12px;")
-        lbl_skel.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.skel_label = QLabel()
-        self.skel_label.setFixedSize(480, 320)
-        self.skel_label.setStyleSheet("background:black; border:1px solid #333;")
-        self.skel_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        right_col.addWidget(lbl_skel)
-        right_col.addWidget(self.skel_label)
-        video_row.addLayout(right_col)
-
-        preview_layout.addLayout(video_row)
+        pv.addLayout(video_row)
 
         self.log_box = QTextEdit()
         self.log_box.setReadOnly(True)
-        self.log_box.setMaximumHeight(130)
+        self.log_box.setMaximumHeight(140)
         self.log_box.setStyleSheet(
-            "background:#1e1e1e; color:#d4d4d4; font-family:monospace; font-size:12px; border-radius:4px;"
+            "background:#1e1e1e; color:#d4d4d4; font-family:monospace;"
+            "font-size:12px; border-radius:4px;"
         )
-        preview_layout.addWidget(self.log_box)
+        pv.addWidget(self.log_box)
         tabs.addTab(preview_widget, "🎬  Live Preview")
 
-        # Tab 2: Database table
+        # ── Tab 2: Database ──
         db_widget = QWidget()
-        db_layout = QVBoxLayout(db_widget)
-        db_layout.setContentsMargins(8, 8, 8, 8)
+        dv = QVBoxLayout(db_widget)
+        dv.setContentsMargins(8, 8, 8, 8)
 
         self.search_field = QLineEdit()
         self.search_field.setPlaceholderText("Search words…")
         self.search_field.setStyleSheet("padding:6px; font-size:13px;")
         self.search_field.textChanged.connect(self._filter_table)
-        db_layout.addWidget(self.search_field)
+        dv.addWidget(self.search_field)
 
         self.table = QTableWidget()
         self.table.setColumnCount(3)
@@ -325,22 +334,23 @@ class MainWindow(QMainWindow):
         self.table.setStyleSheet(
             "QTableWidget{font-size:13px;} QHeaderView::section{font-weight:bold; padding:4px;}"
         )
-        db_layout.addWidget(self.table)
+        dv.addWidget(self.table)
         tabs.addTab(db_widget, "📖  Database")
 
         root.addWidget(tabs)
 
     # ── Database ───────────────────────────────────────────────────────────
     def _load_database(self):
-        missing = [p for p in [DB_PATH, VIDEO_FOLDER, VIDEO_INDEX] if not os.path.exists(p)]
-        if missing:
+        bad = [p for p in [DB_PATH, VIDEO_FOLDER, VIDEO_INDEX] if not os.path.exists(p)]
+        if bad:
             self.db_status.setText("❌ Path not found — check DB_PATH in main.py")
             self.db_status.setStyleSheet("color:red; font-size:12px;")
-            self.log("Missing:\n" + "\n".join(missing))
+            self.log("Missing paths:\n" + "\n".join(bad))
             return
         try:
             self.db = DataBase(database_path=DB_PATH, video_folder=VIDEO_FOLDER)
-            self.db.build_dictionary(word_to_video_path=VIDEO_INDEX, video_folder_path=VIDEO_FOLDER)
+            self.db.build_dictionary(word_to_video_path=VIDEO_INDEX,
+                                     video_folder_path=VIDEO_FOLDER)
             self._populate_table()
             n = len(self.db.word_to_path)
             self.db_status.setText(f"✅ Database loaded — {n} words available")
@@ -350,34 +360,34 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self.db_status.setText(f"❌ {e}")
             self.db_status.setStyleSheet("color:red; font-size:12px;")
+            self.log(f"Error: {e}")
 
     def _populate_table(self):
         words = sorted(self.db.word_to_path.keys())
         self.table.setRowCount(len(words))
-        for row, word in enumerate(words):
-            self.table.setItem(row, 0, QTableWidgetItem(word))
-            self.table.setItem(row, 1, QTableWidgetItem(self.db.word_to_path[word]))
+        for r, word in enumerate(words):
+            self.table.setItem(r, 0, QTableWidgetItem(word))
+            self.table.setItem(r, 1, QTableWidgetItem(self.db.word_to_path[word]))
             s = QTableWidgetItem("✅ Available")
             s.setForeground(QColor("#16a34a"))
-            self.table.setItem(row, 2, s)
+            self.table.setItem(r, 2, s)
 
     def _filter_table(self, text):
-        for row in range(self.table.rowCount()):
-            item = self.table.item(row, 0)
-            self.table.setRowHidden(row, text.lower() not in (item.text().lower() if item else ""))
+        for r in range(self.table.rowCount()):
+            item = self.table.item(r, 0)
+            self.table.setRowHidden(r, text.lower() not in (item.text().lower() if item else ""))
 
     def _on_input_changed(self, text):
         if not self.db:
             return
         typed = {w.lower() for w in re.split(r'[;,\s]+', text.strip()) if w}
-        for row in range(self.table.rowCount()):
-            item = self.table.item(row, 0)
+        for r in range(self.table.rowCount()):
+            item = self.table.item(r, 0)
             if not item:
                 continue
-            hit = item.text().lower() in typed
-            bg  = QColor("#fef08a") if hit else QColor("transparent")
-            for col in range(3):
-                cell = self.table.item(row, col)
+            bg = QColor("#fef08a") if item.text().lower() in typed else QColor("transparent")
+            for c in range(3):
+                cell = self.table.item(r, c)
                 if cell:
                     cell.setBackground(bg)
 
@@ -388,26 +398,31 @@ class MainWindow(QMainWindow):
             return
         self.run_btn.setEnabled(False)
         self.log_box.clear()
+        self.raw_label.clear()
+        self.skel_label.clear()
+        self.word_label.setText("Starting…")
         self.log(f'🔤 Translating: "{sentence}"')
 
         self.thread = WorkerThread(sentence, self.db)
-        self.thread.log_signal.connect(self.log)
-        self.thread.frame_signal.connect(self._update_preview)
-        self.thread.done_signal.connect(self.on_done)
+        self.thread.log_signal.connect(self.log, Qt.ConnectionType.QueuedConnection)
+        self.thread.done_signal.connect(self.on_done, Qt.ConnectionType.QueuedConnection)
+        # QueuedConnection ensures frame updates happen on the GUI thread
+        self.thread.frame_signal.connect(self._update_preview,
+                                         Qt.ConnectionType.QueuedConnection)
         self.thread.start()
 
-    def _update_preview(self, raw_frame, skel_frame, word):
+    def _update_preview(self, raw: np.ndarray, skel: np.ndarray, word: str):
         self.word_label.setText(f"Word: {word}")
-        self.raw_label.setPixmap(numpy_to_pixmap(raw_frame, 480, 320))
-        self.skel_label.setPixmap(numpy_to_pixmap(skel_frame, 480, 320))
+        self.raw_label.setPixmap(bgr_to_pixmap(raw,  PREVIEW_W, PREVIEW_H))
+        self.skel_label.setPixmap(bgr_to_pixmap(skel, PREVIEW_W, PREVIEW_H))
 
-    def log(self, msg):
+    def log(self, msg: str):
         self.log_box.append(msg)
 
     def on_done(self):
         self.log("✅ All done!")
-        self.run_btn.setEnabled(True)
         self.word_label.setText("✅ Complete")
+        self.run_btn.setEnabled(True)
 
 
 # ── Entry point ────────────────────────────────────────────────────────────

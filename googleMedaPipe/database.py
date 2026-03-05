@@ -79,7 +79,7 @@ class DataBase:
 
         if video_index is None:
             print(f"Warning: The word '{word}' is not found in the dictionary.")
-            return None
+            return "Warning: No video found for this word."
 
         return os.path.join(self.video_folder, f"{video_index}.mp4")
         
