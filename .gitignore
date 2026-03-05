@@ -5,6 +5,7 @@ mp_env/
 .env.*
 myenv/
 .env/
+dataSets/*
 
 #docker stuff 
 .DS_Store
