@@ -75,9 +75,13 @@ echo "✅ Packages installed"
 # ── Step 5: Build the app ─────────────────────
 echo ""
 echo "▶ Building ASL-Translator.app (this takes 1-3 minutes)..."
+MEDIAPIPE_DIR=$(python3 -c "import mediapipe, os; print(os.path.dirname(mediapipe.__file__))")
+echo "   MediaPipe found at: $MEDIAPIPE_DIR"
+
 pyinstaller --onedir --windowed \
     --name "ASL-Translator" \
     --add-data "googleMedaPipe:googleMedaPipe" \
+    --add-data "$MEDIAPIPE_DIR:mediapipe" \
     main.py \
     --noconfirm \
     --log-level WARN
