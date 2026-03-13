@@ -24,29 +24,11 @@ if [ "$PYTHON_VERSION" -lt 9 ]; then
 fi
 echo "✅ Python3 found"
 
-# ── Step 2: Check dataset ─────────────────────
-DATASET_PATH="$HOME/Desktop/dataSet/wlasl-complete"
+# ── Step 2: Dataset info ─────────────────────
 echo ""
-echo "▶ Checking for dataset at: $DATASET_PATH"
-if [ ! -d "$DATASET_PATH" ]; then
-    echo ""
-    echo "❌ Dataset not found at: $DATASET_PATH"
-    echo ""
-    echo "   Please place the wlasl-complete dataset folder here:"
-    echo "   ~/Desktop/dataSet/wlasl-complete"
-    echo ""
-    echo "   It should contain:"
-    echo "   - wlasl_class_list.txt"
-    echo "   - videos/ folder"
-    echo ""
-    read -p "Press Enter once you've added the dataset, or Ctrl+C to exit..."
-fi
-
-if [ ! -f "$DATASET_PATH/wlasl_class_list.txt" ]; then
-    echo "❌ wlasl_class_list.txt not found in dataset folder."
-    exit 1
-fi
-echo "✅ Dataset found"
+echo "▶ Dataset path is configured via the app's Settings page on first launch."
+echo "   Make sure your dataSet/wlasl-complete folder is accessible on this machine."
+echo "✅ Skipping dataset check (handled by config.json at runtime)"
 
 # ── Step 3: Create virtual environment ────────
 echo ""
@@ -80,9 +62,9 @@ echo "   MediaPipe found at: $MEDIAPIPE_DIR"
 
 pyinstaller --onedir --windowed \
     --name "ASL-Translator" \
-    --add-data "googleMedaPipe:googleMedaPipe" \
+    --add-data "kily_module:kily_module" \
     --add-data "$MEDIAPIPE_DIR:mediapipe" \
-    main.py \
+    launcher.py \
     --noconfirm \
     --log-level WARN
 
@@ -117,8 +99,8 @@ echo "║                                      ║"
 echo "║  OR double-click:                    ║"
 echo "║  dist/ASL-Translator.app             ║"
 echo "║                                      ║"
-echo "║  Dataset must stay at:               ║"
-echo "║  ~/Desktop/dataSet/wlasl-complete    ║"
+echo "║  Set dataset path in Settings        ║"
+echo "║  on first launch of the app          ║"
 echo "║                                      ║"
 echo "╚══════════════════════════════════════╝"
 echo ""

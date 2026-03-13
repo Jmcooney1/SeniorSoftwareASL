@@ -19,16 +19,35 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt6.QtGui import QColor, QImage, QPixmap
 
-from database import DataBase
-from SkeletonExtractor import SkeletonExtractor
-import projectPoints as projectPoints
+from kily_module.database import DataBase
+from kily_module.SkeletonExtractor import SkeletonExtractor
+import kily_module.projectPoints as projectPoints
 import mediapipe as mp
 
-# ── Paths ──────────────────────────────────────────────────────────────────
-DB_PATH      = "/Users/kilyjasso/Desktop/dataSet/wlasl-complete"
-VIDEO_FOLDER = os.path.join(DB_PATH, "videos")
-VIDEO_INDEX  = os.path.join(DB_PATH, "wlasl_class_list.txt")
-SAVE_DIR     = os.path.join(SCRIPT_DIR, "googleMedaPipe", "savedVideoPoints")
+# ── Paths — read from shared config.json at project root ───────────────────
+def _load_paths():
+    # Walk up from this file to find config.json (works from any subfolder depth)
+    import json
+    search = os.path.abspath(SCRIPT_DIR)
+    for _ in range(4):
+        candidate = os.path.join(search, "config.json")
+        if os.path.exists(candidate):
+            with open(candidate) as f:
+                cfg = json.load(f)
+            return (
+                cfg.get("dataset_path", ""),
+                cfg.get("save_dir", os.path.join(SCRIPT_DIR, "savedVideoPoints"))
+            )
+        search = os.path.dirname(search)
+    # Fallback if no config found
+    return (
+        os.path.join(SCRIPT_DIR, "dataSet", "wlasl-complete"),
+        os.path.join(SCRIPT_DIR, "savedVideoPoints")
+    )
+
+DB_PATH, SAVE_DIR = _load_paths()
+VIDEO_FOLDER      = os.path.join(DB_PATH, "videos")
+VIDEO_INDEX       = os.path.join(DB_PATH, "wlasl_class_list.txt")
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
