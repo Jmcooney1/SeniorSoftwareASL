@@ -64,6 +64,11 @@ pyinstaller --onedir --windowed \
     --name "ASL-Translator" \
     --add-data "kily_module:kily_module" \
     --add-data "$MEDIAPIPE_DIR:mediapipe" \
+    --hidden-import cv2 \
+    --hidden-import numpy \
+    --hidden-import mediapipe \
+    --collect-all cv2 \
+    --collect-all mediapipe \
     launcher.py \
     --noconfirm \
     --log-level WARN
