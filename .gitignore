@@ -7,7 +7,6 @@ mp_env/
 myenv/
 
 # Dataset (too large for git)
-dataSet/drew-dataset/*
 dataSet/kily-dataset/*
 
 # Build output (setup.sh rebuilds these)
