@@ -63,6 +63,7 @@ echo "   MediaPipe found at: $MEDIAPIPE_DIR"
 pyinstaller --onedir --windowed \
     --name "ASL-Translator" \
     --add-data "kily_module:kily_module" \
+    --add-data "drews_module:drews_module" \
     --add-data "$MEDIAPIPE_DIR:mediapipe" \
     --hidden-import cv2 \
     --hidden-import numpy \

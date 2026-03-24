@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFont
 
-# ── Config ─────────────────────────────────────────────────────────────────
+# ── Config ──────────────────────────────────────────────────────────────────
 ROOT_DIR    = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(ROOT_DIR, "config.json")
 
@@ -28,48 +28,44 @@ def save_config(cfg: dict):
     with open(CONFIG_PATH, "w") as f:
         json.dump(cfg, f, indent=4)
 
+def _resolve(path: str) -> str:
+    """Turn a relative path into absolute using ROOT_DIR as the base."""
+    if not os.path.isabs(path):
+        return os.path.join(ROOT_DIR, path)
+    return path
+
 def config_is_valid(cfg: dict) -> bool:
-    return bool(cfg.get("dataset_path")) and os.path.isdir(cfg["dataset_path"])
+    """Valid as long as dataset_path exists on disk (relative or absolute)."""
+    base = cfg.get("dataset_path", "")
+    return bool(base) and os.path.isdir(_resolve(base))
 
 
-# ── Module discovery ────────────────────────────────────────────────────────
+# ── Module discovery ─────────────────────────────────────────────────────────
 def discover_modules() -> list:
     """
-    Scans ROOT_DIR for subfolders that contain both __init__.py and main.py.
-    Those are treated as launchable modules and get a button automatically.
-
-    Each module folder can optionally contain module_info.json:
-    {
-        "name":  "My Feature",
-        "desc":  "Short description shown on the button",
-        "emoji": "🤟"
-    }
-    Without module_info.json the folder name is used as the display name.
+    Scans ROOT_DIR for subfolders with both __init__.py and main.py.
+    Each module can optionally have a module_info.json:
+        { "name": "My Feature", "desc": "Short description", "emoji": "🤟" }
     """
     modules = []
-    skip = {"myenv", "build", "dist", "__pycache__", ".git"}
+    skip = {"myenv", "build", "dist", "__pycache__", ".git", "dataSet", "savedVideoPoints"}
 
     for entry in sorted(os.listdir(ROOT_DIR)):
         folder_path = os.path.join(ROOT_DIR, entry)
-
         if not os.path.isdir(folder_path):
             continue
         if entry in skip or entry.startswith("."):
             continue
-
-        has_init = os.path.exists(os.path.join(folder_path, "__init__.py"))
-        has_main = os.path.exists(os.path.join(folder_path, "main.py"))
-        if not (has_init and has_main):
+        if not os.path.exists(os.path.join(folder_path, "__init__.py")):
+            continue
+        if not os.path.exists(os.path.join(folder_path, "main.py")):
             continue
 
         info_path = os.path.join(folder_path, "module_info.json")
-        if os.path.exists(info_path):
-            try:
-                with open(info_path) as f:
-                    info = json.load(f)
-            except Exception:
-                info = {}
-        else:
+        try:
+            with open(info_path) as f:
+                info = json.load(f)
+        except Exception:
             info = {}
 
         modules.append({
@@ -82,7 +78,7 @@ def discover_modules() -> list:
     return modules
 
 
-# ── Styles ──────────────────────────────────────────────────────────────────
+# ── Styles ───────────────────────────────────────────────────────────────────
 BTN_PRIMARY = """
     QPushButton {
         background: #2563eb; color: white;
@@ -103,7 +99,7 @@ BTN_SECONDARY = """
 """
 
 
-# ── Settings Page ───────────────────────────────────────────────────────────
+# ── Settings Page ─────────────────────────────────────────────────────────────
 class SettingsPage(QWidget):
     def __init__(self, on_save_callback):
         super().__init__()
@@ -121,8 +117,8 @@ class SettingsPage(QWidget):
         layout.addWidget(title)
 
         subtitle = QLabel(
-            "Set these paths once. Every module reads them from config.json automatically.\n"
-            "You can change them any time from the launcher."
+            "Point to your dataSet folder. Each module finds its own subfolder automatically.\n"
+            "You can use a relative path (e.g. dataSet) or browse to an absolute path."
         )
         subtitle.setStyleSheet("color: #64748b; font-size: 13px;")
         subtitle.setWordWrap(True)
@@ -130,14 +126,17 @@ class SettingsPage(QWidget):
 
         layout.addWidget(self._divider())
 
+        # ── Dataset folder ──
         layout.addWidget(self._field_label(
-            "📁  Dataset Path",
-            "The wlasl-complete folder (contains videos/ and wlasl_class_list.txt)"))
+            "📁  Dataset Folder",
+            "The folder that contains wlasl-complete/, drew-dataset/, etc."))
+
         ds_row = QHBoxLayout()
         self.dataset_field = QLineEdit()
-        self.dataset_field.setPlaceholderText("Browse to your wlasl-complete folder…")
+        self.dataset_field.setPlaceholderText("e.g.  dataSet  or  /absolute/path/to/dataSet")
         self.dataset_field.setStyleSheet(
             "padding: 8px; font-size: 13px; border: 1px solid #cbd5e1; border-radius: 6px;")
+        self.dataset_field.textChanged.connect(self._update_preview)
         browse_ds = QPushButton("Browse…")
         browse_ds.setStyleSheet(BTN_SECONDARY)
         browse_ds.setFixedWidth(100)
@@ -146,12 +145,21 @@ class SettingsPage(QWidget):
         ds_row.addWidget(browse_ds)
         layout.addLayout(ds_row)
 
+        # Live sub-path preview
+        self.path_preview = QLabel("")
+        self.path_preview.setStyleSheet(
+            "color: #64748b; font-size: 11px; font-family: monospace; padding-left: 4px;")
+        self.path_preview.setWordWrap(True)
+        layout.addWidget(self.path_preview)
+
+        # ── Save directory ──
         layout.addWidget(self._field_label(
             "💾  Save Directory",
             "Where extracted landmark CSV files will be saved"))
+
         sv_row = QHBoxLayout()
         self.save_field = QLineEdit()
-        self.save_field.setPlaceholderText("Browse to your savedVideoPoints folder…")
+        self.save_field.setPlaceholderText("e.g.  savedVideoPoints")
         self.save_field.setStyleSheet(
             "padding: 8px; font-size: 13px; border: 1px solid #cbd5e1; border-radius: 6px;")
         browse_sv = QPushButton("Browse…")
@@ -176,6 +184,27 @@ class SettingsPage(QWidget):
         btn_row.addWidget(save_btn)
         layout.addLayout(btn_row)
 
+    def _update_preview(self, text):
+        """Show resolved sub-paths so the user can confirm everything is found."""
+        base = _resolve(text.strip())
+        if not text.strip():
+            self.path_preview.setText("")
+            return
+
+        def check(path):
+            return "✅" if os.path.isdir(path) else "❌ not found"
+
+        wlasl  = os.path.join(base, "wlasl-complete")
+        drew   = os.path.join(base, "drew-dataset")
+        videos = os.path.join(wlasl, "videos")
+
+        self.path_preview.setText(
+            f"  Resolved: {base}\n"
+            f"  wlasl-complete/        {check(wlasl)}\n"
+            f"  wlasl-complete/videos/ {check(videos)}\n"
+            f"  drew-dataset/          {check(drew)}"
+        )
+
     def _load_existing(self):
         cfg = load_config()
         if cfg.get("dataset_path"):
@@ -184,7 +213,7 @@ class SettingsPage(QWidget):
             self.save_field.setText(cfg["save_dir"])
 
     def _browse_dataset(self):
-        folder = QFileDialog.getExistingDirectory(self, "Select wlasl-complete folder")
+        folder = QFileDialog.getExistingDirectory(self, "Select your dataSet folder")
         if folder:
             self.dataset_field.setText(folder)
 
@@ -196,14 +225,19 @@ class SettingsPage(QWidget):
     def _save(self):
         ds = self.dataset_field.text().strip()
         sv = self.save_field.text().strip()
-        if not ds or not os.path.isdir(ds):
+
+        if not ds or not os.path.isdir(_resolve(ds)):
             QMessageBox.warning(self, "Invalid Path",
-                "Dataset path does not exist. Please browse to a valid folder.")
+                f"Dataset folder not found:\n{_resolve(ds)}\n\n"
+                "Please type a valid relative path or use Browse.")
             return
         if not sv:
-            QMessageBox.warning(self, "Missing Path", "Please enter a save directory.")
+            QMessageBox.warning(self, "Missing Path",
+                "Please enter a save directory.")
             return
-        os.makedirs(sv, exist_ok=True)
+
+        os.makedirs(_resolve(sv), exist_ok=True)
+        # Save exactly what the user typed — relative stays relative
         save_config({"dataset_path": ds, "save_dir": sv})
         self.status_label.setText("✅ Saved!")
         QTimer.singleShot(600, self.on_save)
@@ -228,7 +262,7 @@ class SettingsPage(QWidget):
         return line
 
 
-# ── Launcher Page ───────────────────────────────────────────────────────────
+# ── Launcher Page ─────────────────────────────────────────────────────────────
 class LauncherPage(QWidget):
     def __init__(self, on_settings_callback):
         super().__init__()
@@ -241,7 +275,7 @@ class LauncherPage(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        # ── Header bar ──
+        # ── Header ──
         header = QWidget()
         header.setStyleSheet("background: #1e293b;")
         header.setFixedHeight(60)
@@ -276,10 +310,10 @@ class LauncherPage(QWidget):
         if not modules:
             empty = QLabel(
                 "No modules found.\n\n"
-                "To add a module, create a subfolder containing:\n"
+                "To add a module, create a subfolder with:\n"
                 "  • __init__.py\n"
                 "  • main.py  (must have a MainWindow class)\n\n"
-                "Optionally add module_info.json with name, desc, and emoji fields."
+                "Optionally add module_info.json with name, desc, and emoji."
             )
             empty.setStyleSheet(
                 "color: #64748b; font-size: 14px; background: white;"
@@ -311,9 +345,11 @@ class LauncherPage(QWidget):
 
         bl.addStretch()
 
+        # Footer shows resolved absolute path for confirmation
         cfg = load_config()
-        ds = cfg.get("dataset_path") or "not configured — click Settings"
-        footer = QLabel(f"Dataset: {ds}")
+        raw = cfg.get("dataset_path") or ""
+        resolved = _resolve(raw) if raw else "not configured — click Settings"
+        footer = QLabel(f"Dataset: {resolved}")
         footer.setStyleSheet("color: #94a3b8; font-size: 11px;")
         footer.setWordWrap(True)
         bl.addWidget(footer)
@@ -345,12 +381,12 @@ class LauncherPage(QWidget):
                 f"Could not load {mod['folder']}.main:\n{e}")
         except AttributeError:
             QMessageBox.critical(self, "Missing MainWindow",
-                f"{mod['folder']}/main.py must contain a class called MainWindow.")
+                f"{mod['folder']}/main.py must define a class called MainWindow.")
         except Exception as e:
             QMessageBox.critical(self, "Launch Error", str(e))
 
 
-# ── Shell Window ────────────────────────────────────────────────────────────
+# ── Shell Window ──────────────────────────────────────────────────────────────
 class ShellWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -366,6 +402,7 @@ class ShellWindow(QMainWindow):
         self.stack.addWidget(self.settings_page)  # index 0
         self.stack.addWidget(self.launcher_page)  # index 1
 
+        # Skip settings page if config is already valid
         if config_is_valid(load_config()):
             self.stack.setCurrentIndex(1)
         else:
@@ -382,7 +419,7 @@ class ShellWindow(QMainWindow):
         self.stack.setCurrentIndex(0)
 
 
-# ── Entry point ─────────────────────────────────────────────────────────────
+# ── Entry point ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setStyle("Fusion")

@@ -5,7 +5,7 @@ import shutil
 import cv2
 import numpy as np
 
-SCRIPT_DIR           = os.path.dirname(os.path.abspath(__file__))
+SCRIPT_DIR            = os.path.dirname(os.path.abspath(__file__))
 GOOGLE_MEDIA_PIPE_DIR = os.path.join(SCRIPT_DIR, "googleMedaPipe")
 sys.path.insert(0, GOOGLE_MEDIA_PIPE_DIR)
 
@@ -14,64 +14,38 @@ from PyQt6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLabel,
     QLineEdit, QPushButton, QTextEdit,
     QTableWidget, QTableWidgetItem, QHeaderView,
-    QSplitter, QFrame, QTabWidget
+    QFrame, QTabWidget
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt6.QtGui import QColor, QImage, QPixmap
 
 from kily_module.database import DataBase
-from kily_module.SkeletonExtractor import SkeletonExtractor
 import kily_module.projectPoints as projectPoints
 import mediapipe as mp
 
-# ── Paths — read from shared config.json at project root ───────────────────
-def _load_paths():
-    # Walk up from this file to find config.json (works from any subfolder depth)
-    import json
-    search = os.path.abspath(SCRIPT_DIR)
-    for _ in range(4):
-        candidate = os.path.join(search, "config.json")
-        if os.path.exists(candidate):
-            with open(candidate) as f:
-                cfg = json.load(f)
-            return (
-                cfg.get("dataset_path", ""),
-                cfg.get("save_dir", os.path.join(SCRIPT_DIR, "savedVideoPoints"))
-            )
-        search = os.path.dirname(search)
-    # Fallback if no config found
-    return (
-        os.path.join(SCRIPT_DIR, "dataSet", "wlasl-complete"),
-        os.path.join(SCRIPT_DIR, "savedVideoPoints")
-    )
-
-DB_PATH, SAVE_DIR = _load_paths()
-VIDEO_FOLDER      = os.path.join(DB_PATH, "videos")
-VIDEO_INDEX       = os.path.join(DB_PATH, "wlasl_class_list.txt")
+# ── Import resolved paths from main.py — single source of truth ────────────
+from kily_module.main import DB_PATH, VIDEO_FOLDER, VIDEO_INDEX, SAVE_DIR
 
 
-# ── Helpers ────────────────────────────────────────────────────────────────
+# ── Helpers ─────────────────────────────────────────────────────────────────
 def numpy_to_pixmap(frame_bgr, w, h):
-    """Convert an OpenCV BGR frame to a QPixmap scaled to (w, h)."""
     rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
     rgb = cv2.resize(rgb, (w, h))
     img = QImage(rgb.data, w, h, w * 3, QImage.Format.Format_RGB888)
     return QPixmap.fromImage(img)
 
 
-# ── Worker Thread ──────────────────────────────────────────────────────────
+# ── Worker Thread ────────────────────────────────────────────────────────────
 class WorkerThread(QThread):
-    log_signal        = pyqtSignal(str)
-    done_signal       = pyqtSignal()
-    # emits (raw_bgr_frame, skeleton_bgr_frame, word_label)
-    frame_signal      = pyqtSignal(object, object, str)
+    log_signal   = pyqtSignal(str)
+    done_signal  = pyqtSignal()
+    frame_signal = pyqtSignal(object, object, str)  # (raw_bgr, skel_bgr, word)
 
     def __init__(self, sentence: str, db: DataBase):
         super().__init__()
         self.sentence = sentence
         self.db       = db
 
-    # ── internal: extract skeleton AND emit frames for live preview ──
     def _extract_with_preview(self, word: str, video_path: str):
         mp_drawing        = mp.solutions.drawing_utils
         mp_drawing_styles = mp.solutions.drawing_styles
@@ -124,7 +98,7 @@ class WorkerThread(QThread):
             hand_results = hands.process(rgb)
             pose_results = pose.process(rgb)
 
-            # ── Raw frame with MediaPipe overlay ──
+            # Raw frame with MediaPipe overlay
             raw_display = frame.copy()
             if pose_results and pose_results.pose_landmarks:
                 mp_drawing.draw_landmarks(
@@ -142,7 +116,7 @@ class WorkerThread(QThread):
                         connection_drawing_spec=mp_drawing_styles.get_default_hand_connections_style()
                     )
 
-            # ── Skeleton-only frame ──
+            # Skeleton-only frame
             h, w = frame.shape[:2]
             skel = np.zeros((h, w, 3), dtype=np.uint8)
             if pose_results and pose_results.pose_landmarks:
@@ -163,7 +137,7 @@ class WorkerThread(QThread):
 
             self.frame_signal.emit(raw_display.copy(), skel.copy(), word)
 
-            # ── Save CSVs ──
+            # Save CSVs
             if hand_results and hand_results.multi_hand_landmarks:
                 for hi, hl in enumerate(hand_results.multi_hand_landmarks):
                     for li, lm in enumerate(hl.landmark):
@@ -188,7 +162,6 @@ class WorkerThread(QThread):
         pose.close()
 
     def run(self):
-        # Clear previous output
         if os.path.exists(SAVE_DIR):
             for item in os.listdir(SAVE_DIR):
                 p = os.path.join(SAVE_DIR, item)
@@ -196,7 +169,6 @@ class WorkerThread(QThread):
 
         words = [w for w in re.split(r'[;,\s]+', self.sentence.strip()) if w]
 
-        # Phase 1: extract skeleton + live preview
         for word in words:
             video_path = self.db.get_video_path(word)
             if video_path is None or "Warning" in str(video_path):
@@ -206,7 +178,6 @@ class WorkerThread(QThread):
             self._extract_with_preview(word, video_path)
             self.log_signal.emit(f"✅  Done extracting: {word}")
 
-        # Phase 2: project points
         for word in words:
             word_dir = os.path.join(SAVE_DIR, word)
             if os.path.isdir(word_dir):
@@ -219,7 +190,7 @@ class WorkerThread(QThread):
         self.done_signal.emit()
 
 
-# ── Main Window ────────────────────────────────────────────────────────────
+# ── Main Window ──────────────────────────────────────────────────────────────
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -236,7 +207,6 @@ class MainWindow(QMainWindow):
         root.setSpacing(10)
         root.setContentsMargins(14, 14, 14, 14)
 
-        # Title
         title = QLabel("ASL Skeleton Translator")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title.setStyleSheet("font-size:22px; font-weight:bold; padding:4px;")
@@ -246,7 +216,6 @@ class MainWindow(QMainWindow):
         self.db_status.setStyleSheet("color:gray; font-size:12px;")
         root.addWidget(self.db_status)
 
-        # Input row
         row = QHBoxLayout()
         self.input_field = QLineEdit()
         self.input_field.setPlaceholderText("Type a word or sentence to translate…")
@@ -267,7 +236,6 @@ class MainWindow(QMainWindow):
         row.addWidget(self.run_btn)
         root.addLayout(row)
 
-        # ── Tabs ──
         tabs = QTabWidget()
         tabs.setStyleSheet("QTabBar::tab { padding:6px 16px; font-size:13px; }")
 
@@ -283,7 +251,6 @@ class MainWindow(QMainWindow):
 
         video_row = QHBoxLayout()
 
-        # Raw + mediapipe
         left_col = QVBoxLayout()
         lbl_raw = QLabel("📷  Camera / Video + MediaPipe")
         lbl_raw.setStyleSheet("font-weight:bold; font-size:12px;")
@@ -296,7 +263,6 @@ class MainWindow(QMainWindow):
         left_col.addWidget(self.raw_label)
         video_row.addLayout(left_col)
 
-        # Skeleton only
         right_col = QVBoxLayout()
         lbl_skel = QLabel("🦴  Skeleton Projection")
         lbl_skel.setStyleSheet("font-weight:bold; font-size:12px;")
@@ -320,7 +286,7 @@ class MainWindow(QMainWindow):
         preview_layout.addWidget(self.log_box)
         tabs.addTab(preview_widget, "🎬  Live Preview")
 
-        # Tab 2: Database table
+        # Tab 2: Database
         db_widget = QWidget()
         db_layout = QVBoxLayout(db_widget)
         db_layout.setContentsMargins(8, 8, 8, 8)
@@ -349,13 +315,12 @@ class MainWindow(QMainWindow):
 
         root.addWidget(tabs)
 
-    # ── Database ───────────────────────────────────────────────────────────
     def _load_database(self):
         missing = [p for p in [DB_PATH, VIDEO_FOLDER, VIDEO_INDEX] if not os.path.exists(p)]
         if missing:
-            self.db_status.setText("❌ Path not found — check DB_PATH in main.py")
+            self.db_status.setText("❌ Path not found — check config.json")
             self.db_status.setStyleSheet("color:red; font-size:12px;")
-            self.log("Missing:\n" + "\n".join(missing))
+            self.log("Missing paths:\n" + "\n".join(missing))
             return
         try:
             self.db = DataBase(database_path=DB_PATH, video_folder=VIDEO_FOLDER)
@@ -400,7 +365,6 @@ class MainWindow(QMainWindow):
                 if cell:
                     cell.setBackground(bg)
 
-    # ── Processing ─────────────────────────────────────────────────────────
     def start_processing(self):
         sentence = self.input_field.text().strip()
         if not sentence or not self.db:
@@ -427,12 +391,3 @@ class MainWindow(QMainWindow):
         self.log("✅ All done!")
         self.run_btn.setEnabled(True)
         self.word_label.setText("✅ Complete")
-
-
-# ── Entry point ────────────────────────────────────────────────────────────
-if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    app.setStyle("Fusion")
-    window = MainWindow()
-    window.show()
-    sys.exit(app.exec())

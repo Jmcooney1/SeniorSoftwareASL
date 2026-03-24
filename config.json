@@ -1,4 +1,4 @@
 {
-    "dataset_path": "/Users/kilyjasso/Desktop/SeniorSoftwareASL/dataSet/wlasl-complete",
-    "save_dir": "/Users/kilyjasso/Desktop/SeniorSoftwareASL/savedVideoPoints"
+    "dataset_path": "dataSet",
+    "save_dir": "savedVideoPoints"
 }

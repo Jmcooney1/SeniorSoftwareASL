@@ -4,10 +4,15 @@ import tkinter as tk
 from tkinter import messagebox
 from PIL import Image, ImageTk
 
+# DATA_DIR is no longer hardcoded here — it's passed in by main() from drews_module/main.py
+# This fallback only fires if you run translationquiz.py directly (not via the launcher)
+_FALLBACK_DIR = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "..", "dataSet", "drew-dataset", "asl_letters"
+)
 
-DATA_DIR = os.path.join("data", "asl_letters")
-IMG_SIZE = (320, 320)          
-NUM_QUESTIONS = None        #infinite
+IMG_SIZE      = (320, 320)
+NUM_QUESTIONS = None  # None = infinite
 
 
 def normalize(s: str) -> str:
@@ -46,16 +51,15 @@ class ASLQuizApp:
         self.root = root
         self.root.title("ASL Quiz")
 
-        self.all_questions = questions[:]  # shuffled list
-        self.remaining = questions[:]       # copy for session
+        self.all_questions = questions[:]
+        self.remaining     = questions[:]
 
-        self.total_asked = 0
-        self.correct = 0
+        self.total_asked  = 0
+        self.correct      = 0
+        self.current      = None
+        self.current_photo = None  # keep PhotoImage reference alive
 
-        self.current = None
-        self.current_photo = None  # IMPORTANT: keep reference to PhotoImage
-
-        # --- UI ---
+        # ── UI ──
         self.image_label = tk.Label(root)
         self.image_label.pack(padx=12, pady=12)
 
@@ -89,7 +93,6 @@ class ASLQuizApp:
 
     def next_question(self):
         if not self.remaining:
-            # If you want to loop forever, reshuffle and restart.
             self.remaining = self.all_questions[:]
             random.shuffle(self.remaining)
 
@@ -107,13 +110,11 @@ class ASLQuizApp:
     def on_submit(self, event=None):
         if not self.current:
             return
-
         user = normalize(self.answer_entry.get())
         if user == "":
             return
 
-        # For letters: accept first character only, normalized.
-        user_letter = user[0].upper()
+        user_letter    = user[0].upper()
         correct_letter = self.current["answer"].upper()
 
         self.total_asked += 1
@@ -121,18 +122,22 @@ class ASLQuizApp:
             self.correct += 1
             self.feedback_var.set(f"Correct! It was {correct_letter}.")
         else:
-            self.feedback_var.set(f"Incorrect. It was {correct_letter}, you typed {user_letter}.")
+            self.feedback_var.set(
+                f"Incorrect. It was {correct_letter}, you typed {user_letter}.")
 
         self.update_status()
-
-        # Move on after a short delay so they can see feedback.
         self.root.after(700, self.next_question)
 
 
-def main():
-    questions = load_questions(DATA_DIR)
-    root = tk.Tk()
-    app = ASLQuizApp(root, questions)
+def main(data_dir: str = None):
+    """
+    data_dir: resolved path to asl_letters folder.
+    If None (e.g. running this file directly), falls back to _FALLBACK_DIR.
+    """
+    folder    = data_dir or _FALLBACK_DIR
+    questions = load_questions(folder)
+    root      = tk.Tk()
+    ASLQuizApp(root, questions)
     root.mainloop()
 
 
