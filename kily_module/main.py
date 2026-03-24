@@ -32,8 +32,8 @@ def _load_paths():
 
 # ── Resolve at import time ──────────────────────────────────────────────────
 _BASE,    SAVE_DIR     = _load_paths()
-DB_PATH      = os.path.join(_BASE, "wlasl-complete")        # dataSet/wlasl-complete
-VIDEO_FOLDER = os.path.join(DB_PATH, "videos")              # dataSet/wlasl-complete/videos
+DB_PATH      = os.path.join(_BASE, "kily-dataset", "wlasl-complete")        # dataSet/wlasl-complete
+VIDEO_FOLDER = os.path.join(DB_PATH, "videos")
 VIDEO_INDEX  = os.path.join(DB_PATH, "wlasl_class_list.txt")
 
 # ── Import the actual window (uses the paths above) ─────────────────────────

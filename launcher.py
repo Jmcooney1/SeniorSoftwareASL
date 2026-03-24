@@ -185,7 +185,6 @@ class SettingsPage(QWidget):
         layout.addLayout(btn_row)
 
     def _update_preview(self, text):
-        """Show resolved sub-paths so the user can confirm everything is found."""
         base = _resolve(text.strip())
         if not text.strip():
             self.path_preview.setText("")
@@ -194,15 +193,15 @@ class SettingsPage(QWidget):
         def check(path):
             return "✅" if os.path.isdir(path) else "❌ not found"
 
-        wlasl  = os.path.join(base, "wlasl-complete")
-        drew   = os.path.join(base, "drew-dataset")
-        videos = os.path.join(wlasl, "videos")
+        kily_wlasl = os.path.join(base, "kily-dataset", "wlasl-complete")  # ← updated
+        drew       = os.path.join(base, "drew-dataset")
+        videos     = os.path.join(kily_wlasl, "videos")
 
         self.path_preview.setText(
             f"  Resolved: {base}\n"
-            f"  wlasl-complete/        {check(wlasl)}\n"
-            f"  wlasl-complete/videos/ {check(videos)}\n"
-            f"  drew-dataset/          {check(drew)}"
+            f"  kily-dataset/wlasl-complete/        {check(kily_wlasl)}\n"
+            f"  kily-dataset/wlasl-complete/videos/ {check(videos)}\n"
+            f"  drew-dataset/                       {check(drew)}"
         )
 
     def _load_existing(self):
