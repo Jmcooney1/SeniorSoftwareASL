@@ -1,14 +1,25 @@
-mediapipe==0.10.11
+# The Bridge Core
+numpy==1.26.4               # Critical: Highest version 0.10.9 can handle
+mediapipe==0.10.9           # Your requested version
+protobuf==3.20.3            # Must be 3.x for MediaPipe 0.10.9 stability
+
+# OpenCV Consistency
 opencv-python==4.10.0.84
 opencv-contrib-python==4.10.0.84
-numpy==1.26.4
-fastdtw
-scipy
-pycparser==3.0
-pyparsing==3.3.2
+
+# UI & Visualization (Compatible with the above)
 PyQt6==6.10.2
 PyQt6-Qt6==6.10.2
 PyQt6_sip==13.11.0
-python-dateutil==2.9.0.post0
-six==1.17.0
-sounddevice==0.5.5
+matplotlib==3.8.4           # Matches NumPy 1.26.4 perfectly
+pillow==10.3.0
+
+# Math & Logic
+scipy==1.12.0
+fastdtw
+absl-py==2.1.0
+attrs==23.2.0
+
+# Build Tools
+pyinstaller==6.11.1
+pyinstaller-hooks-contrib==2024.10
