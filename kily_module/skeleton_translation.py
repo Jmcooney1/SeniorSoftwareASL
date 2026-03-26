@@ -10,7 +10,7 @@ GOOGLE_MEDIA_PIPE_DIR = os.path.join(SCRIPT_DIR, "googleMedaPipe")
 sys.path.insert(0, GOOGLE_MEDIA_PIPE_DIR)
 
 from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QWidget,
+    QWidget,
     QVBoxLayout, QHBoxLayout, QLabel,
     QLineEdit, QPushButton, QTextEdit,
     QTableWidget, QTableWidgetItem, QHeaderView,
@@ -41,10 +41,11 @@ class WorkerThread(QThread):
     done_signal  = pyqtSignal()
     frame_signal = pyqtSignal(object, object, str)  # (raw_bgr, skel_bgr, word)
 
-    def __init__(self, sentence: str, db: DataBase):
+    def __init__(self):
         super().__init__()
-        self.sentence = sentence
-        self.db       = db
+        self._build_ui()      # build widgets first
+        self._apply_theme()   # then apply styles (so all widgets exist)
+        QTimer.singleShot(100, self._load_database)
 
     def _extract_with_preview(self, word: str, video_path: str):
         mp_drawing        = mp.solutions.drawing_utils
@@ -191,19 +192,44 @@ class WorkerThread(QThread):
 
 
 # ── Main Window ──────────────────────────────────────────────────────────────
-class MainWindow(QMainWindow):
+class TranslatorWidget(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("ASL Skeleton Translator")
-        self.setMinimumSize(1200, 750)
-        self.db = None
         self._build_ui()
+        self._apply_theme()        # <-- add this
         QTimer.singleShot(100, self._load_database)
 
+    def _apply_theme(self):
+        self.setStyleSheet("""
+            QWidget            { background-color: #0a0a0a; }
+            QLabel             { color: #e2e8f0; }
+            QLineEdit          { background-color: #1e293b; color: #f1f5f9;
+                                 border: 1px solid #334155; border-radius: 6px; padding: 6px 10px; }
+            QLineEdit:focus    { border-color: #2563eb; }
+            QPushButton        { background-color: #1e293b; color: #e2e8f0;
+                                 border: 1px solid #334155; border-radius: 6px;
+                                 padding: 7px 18px; font-weight: bold; }
+            QPushButton:hover  { background-color: #2563eb; border-color: #2563eb; color: white; }
+            QPushButton:pressed  { background-color: #1d4ed8; }
+            QPushButton:disabled { background-color: #0f172a; color: #475569; border-color: #1e293b; }
+            QTabWidget::pane   { border: 1px solid #1e293b; background-color: #0a0a0a; }
+            QTabBar::tab       { background-color: #111827; color: #64748b;
+                                 padding: 8px 20px; font-size: 13px; font-weight: bold;
+                                 border: none; border-bottom: 2px solid transparent; }
+            QTabBar::tab:selected      { background-color: #0a0a0a; color: #38bdf8;
+                                         border-bottom: 2px solid #38bdf8; }
+            QTabBar::tab:hover:!selected { background-color: #1e293b; color: #cbd5e1; }
+            QTextEdit          { background-color: #050505; color: #a3e635;
+                                 border: 1px solid #1e293b; border-radius: 4px;
+                                 font-family: monospace; font-size: 12px; }
+            QTableWidget       { background-color: #0f172a; color: #e2e8f0;
+                                 gridline-color: #1e293b; border: none; }
+            QTableWidget::item:selected  { background-color: #1e3a5f; color: white; }
+            QHeaderView::section { background-color: #1e293b; color: #94a3b8;
+                                   padding: 6px; border: none; font-weight: bold; }
+        """)
     def _build_ui(self):
-        central = QWidget()
-        self.setCentralWidget(central)
-        root = QVBoxLayout(central)
+        root = QVBoxLayout(self)   # set layout directly on self
         root.setSpacing(10)
         root.setContentsMargins(14, 14, 14, 14)
 
