@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import sys
 import os
 import json
@@ -8,12 +9,11 @@ from PyQt6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QLineEdit, QFileDialog, QFrame, QMessageBox, QScrollArea
 )
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
 
-# ── Config ─────────────────────────────────────────────────────────────────
+# --- Config ---
 ROOT_DIR    = os.path.dirname(os.path.abspath(__file__))
-# We will look for modules specifically in a 'modules' subfolder
 MODULES_DIR = os.path.join(ROOT_DIR, "modules") 
 CONFIG_PATH = os.path.join(ROOT_DIR, "config.json")
 
@@ -23,22 +23,20 @@ if not os.path.exists(MODULES_DIR):
 def load_config() -> dict:
     if os.path.exists(CONFIG_PATH):
         try:
-            with open(CONFIG_PATH, "r") as f:
+            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
                 return json.load(f)
         except Exception:
             pass
     return {"library_path": "", "output_dir": ""}
 
 def save_config(cfg: dict):
-    with open(CONFIG_PATH, "w") as f:
+    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=4)
 
 def config_is_valid(cfg: dict) -> bool:
-    # Just check if we have a path set for the motion library
     return bool(cfg.get("library_path"))
 
-
-# ── Module discovery ────────────────────────────────────────────────────────
+# --- Module discovery ---
 def discover_modules() -> list:
     modules = []
     if not os.path.exists(MODULES_DIR):
@@ -46,7 +44,6 @@ def discover_modules() -> list:
 
     for entry in sorted(os.listdir(MODULES_DIR)):
         folder_path = os.path.join(MODULES_DIR, entry)
-
         if not os.path.isdir(folder_path):
             continue
 
@@ -56,25 +53,41 @@ def discover_modules() -> list:
             continue
 
         info_path = os.path.join(folder_path, "module_info.json")
+        info = {}
         if os.path.exists(info_path):
             try:
-                with open(info_path) as f:
+                # Explicitly use utf-8 to prevent character glitches
+                with open(info_path, "r", encoding="utf-8") as f:
                     info = json.load(f)
             except Exception:
-                info = {}
+                pass
+
+        name_lower = entry.lower()
+        
+        # We use text labels instead of emojis to ensure 100% compatibility 
+        # with all Windows font settings
+        if "train" in name_lower:
+            default_tag = "TRAIN"
+            default_desc = "Record and save new ASL motions"
+        elif "test" in name_lower or "predict" in name_lower:
+            default_tag = "LIVE"
+            default_desc = "Live AI sign language prediction"
+        elif "lib" in name_lower:
+            default_tag = "DATA"
+            default_desc = "Manage your saved motion files"
         else:
-            info = {}
+            default_tag = "APP"
+            default_desc = "Launch motion tool"
 
         modules.append({
             "folder": entry,
             "name":   info.get("name",  entry.replace("_", " ").title()),
-            "desc":   info.get("desc",  "Launch motion tool"),
-            "emoji":  info.get("emoji", "🚀"),
+            "desc":   info.get("desc",  default_desc),
+            "tag":    info.get("emoji", default_tag), # Uses 'tag' to avoid symbol rendering issues
         })
     return modules
 
-
-# ── Styles ──────────────────────────────────────────────────────────────────
+# --- Styles ---
 BTN_PRIMARY = """
     QPushButton {
         background: #2563eb; color: white; border-radius: 8px; 
@@ -82,6 +95,7 @@ BTN_PRIMARY = """
     }
     QPushButton:hover { background: #1d4ed8; }
 """
+
 BTN_SECONDARY = """
     QPushButton {
         background: #f1f5f9; color: #334155; border-radius: 8px; 
@@ -90,7 +104,22 @@ BTN_SECONDARY = """
     QPushButton:hover { background: #e2e8f0; }
 """
 
-# ── Settings Page ───────────────────────────────────────────────────────────
+TILE_STYLE = """
+    QPushButton {
+        text-align: left; 
+        padding: 25px; 
+        background: white; 
+        border: 1px solid #e2e8f0; 
+        border-radius: 12px;
+        color: #1e293b;
+    }
+    QPushButton:hover { 
+        background: #f8fafc; 
+        border: 2px solid #2563eb; 
+    }
+"""
+
+# --- Settings Page ---
 class SettingsPage(QWidget):
     def __init__(self, on_save_callback):
         super().__init__()
@@ -103,28 +132,29 @@ class SettingsPage(QWidget):
         layout.setContentsMargins(60, 40, 60, 40)
         layout.setSpacing(20)
 
-        title = QLabel("⚙️  Motion App Settings")
+        title = QLabel("Settings")
         title.setStyleSheet("font-size: 22px; font-weight: bold; color: #1e293b;")
         layout.addWidget(title)
-
         layout.addWidget(self._divider())
 
-        # Field 1: Library Path
-        layout.addWidget(self._field_label("📂  Motion Library (.npy)", "Path to your saved ASL motion library file"))
+        layout.addWidget(self._field_label("Motion Library (.npy)", "Select the file where your ASL data is stored"))
+        
         lib_row = QHBoxLayout()
         self.library_field = QLineEdit()
         self.library_field.setPlaceholderText("Select your .npy library file...")
-        self.library_field.setStyleSheet("padding: 8px; border: 1px solid #cbd5e1; border-radius: 6px;")
-        browse_lib = QPushButton("Browse...")
+        self.library_field.setStyleSheet("padding: 10px; border: 1px solid #cbd5e1; border-radius: 6px; background: white;")
+        
+        browse_lib = QPushButton("Browse")
         browse_lib.setStyleSheet(BTN_SECONDARY)
         browse_lib.clicked.connect(self._browse_library)
+        
         lib_row.addWidget(self.library_field)
         lib_row.addWidget(browse_lib)
         layout.addLayout(lib_row)
 
         layout.addStretch()
         
-        save_btn = QPushButton("Save & Start Launcher →")
+        save_btn = QPushButton("Save and Start Launcher")
         save_btn.setStyleSheet(BTN_PRIMARY)
         save_btn.clicked.connect(self._save)
         layout.addWidget(save_btn, alignment=Qt.AlignmentFlag.AlignRight)
@@ -150,12 +180,9 @@ class SettingsPage(QWidget):
         w = QWidget()
         v = QVBoxLayout(w)
         v.setContentsMargins(0, 0, 0, 0)
-        t = QLabel(title)
-        t.setStyleSheet("font-size: 14px; font-weight: bold;")
-        s = QLabel(sub)
-        s.setStyleSheet("font-size: 12px; color: #64748b;")
-        v.addWidget(t)
-        v.addWidget(s)
+        t = QLabel(title); t.setStyleSheet("font-size: 14px; font-weight: bold; color: #334155;")
+        s = QLabel(sub); s.setStyleSheet("font-size: 12px; color: #64748b;")
+        v.addWidget(t); v.addWidget(s)
         return w
 
     def _divider(self):
@@ -164,7 +191,7 @@ class SettingsPage(QWidget):
         line.setStyleSheet("color: #e2e8f0;")
         return line
 
-# ── Launcher Page ───────────────────────────────────────────────────────────
+# --- Launcher Page ---
 class LauncherPage(QWidget):
     def __init__(self, on_settings_callback):
         super().__init__()
@@ -175,73 +202,101 @@ class LauncherPage(QWidget):
     def _build_ui(self):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
 
         # Header
         header = QWidget()
         header.setStyleSheet("background: #1e293b;")
-        header.setFixedHeight(60)
+        header.setFixedHeight(70)
         hl = QHBoxLayout(header)
+        hl.setContentsMargins(25, 0, 25, 0)
+        
         title = QLabel("Motion Launcher")
         title.setStyleSheet("font-size: 20px; font-weight: bold; color: white;")
         hl.addWidget(title)
         hl.addStretch()
-        settings_btn = QPushButton("⚙️ Settings")
-        settings_btn.setStyleSheet("color: white; background: #334155; padding: 5px 15px; border-radius: 5px;")
+        
+        settings_btn = QPushButton("Settings")
+        settings_btn.setStyleSheet("color: white; background: #334155; padding: 8px 16px; border-radius: 6px; font-weight: bold;")
         settings_btn.clicked.connect(self.on_settings)
         hl.addWidget(settings_btn)
         outer.addWidget(header)
 
-        # Body
-        body = QWidget()
-        bl = QVBoxLayout(body)
+        # Scrollable Body
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("border: none; background: #f8fafc;")
+        
+        container = QWidget()
+        self.bl = QVBoxLayout(container)
+        self.bl.setContentsMargins(30, 30, 30, 30)
+        self.bl.setSpacing(15)
+
         modules = discover_modules()
 
         if not modules:
-            bl.addWidget(QLabel("No modules found in /modules folder."))
+            empty_msg = QLabel("No modules found.\nAdd folders to /modules with a main.py file.")
+            empty_msg.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            empty_msg.setStyleSheet("color: #94a3b8; font-size: 16px; margin-top: 100px;")
+            self.bl.addWidget(empty_msg)
         else:
             for mod in modules:
-                btn = QPushButton(f"{mod['emoji']} {mod['name']}\n{mod['desc']}")
-                btn.setStyleSheet("text-align: left; padding: 20px; background: white; border: 1px solid #e2e8f0; border-radius: 10px;")
+                btn = QPushButton()
+                btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                btn.setStyleSheet(TILE_STYLE)
+                
+                btn_layout = QVBoxLayout(btn)
+                # Using the tag logic to prevent gibberish characters
+                name_lbl = QLabel(f"[{mod['tag']}] {mod['name']}")
+                name_lbl.setStyleSheet("font-size: 16px; font-weight: bold; color: #1e293b; border: none; background: transparent;")
+                desc_lbl = QLabel(mod['desc'])
+                desc_lbl.setStyleSheet("font-size: 13px; color: #64748b; border: none; background: transparent;")
+                
+                btn_layout.addWidget(name_lbl)
+                btn_layout.addWidget(desc_lbl)
+                
                 btn.clicked.connect(lambda checked, m=mod: self._launch(m))
-                bl.addWidget(btn)
+                self.bl.addWidget(btn)
         
-        bl.addStretch()
-        scroll = QScrollArea()
-        scroll.setWidget(body)
-        scroll.setWidgetResizable(True)
+        self.bl.addStretch()
+        scroll.setWidget(container)
         outer.addWidget(scroll)
 
     def _launch(self, mod: dict):
-        # Add the modules folder to sys.path so we can import from it
         if MODULES_DIR not in sys.path:
             sys.path.insert(0, MODULES_DIR)
         
         try:
-            # We import the 'main' file from the specific module folder
             module_name = f"{mod['folder']}.main"
             module = importlib.import_module(module_name)
-            # Reload to ensure we get fresh code if changed
             importlib.reload(module)
             
             self.win = module.MainWindow()
             self.win.show()
             self.child_windows.append(self.win)
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to launch module: {e}")
+            QMessageBox.critical(self, "Launch Error", f"Could not open {mod['name']}:\n{str(e)}")
 
-# ── Shell Window ────────────────────────────────────────────────────────────
+# --- Shell Window ---
 class ShellWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Motion Launcher")
-        self.setMinimumSize(700, 600)
+        self.setWindowTitle("Motion Suite")
+        self.setMinimumSize(800, 650)
+        
         self.stack = QStackedWidget()
         self.setCentralWidget(self.stack)
         self._refresh()
 
     def _refresh(self):
+        while self.stack.count():
+            widget = self.stack.widget(0)
+            self.stack.removeWidget(widget)
+            widget.deleteLater()
+
         self.settings_page = SettingsPage(on_save_callback=self._refresh)
         self.launcher_page = LauncherPage(on_settings_callback=self._go_settings)
+        
         self.stack.addWidget(self.settings_page)
         self.stack.addWidget(self.launcher_page)
         
@@ -255,6 +310,8 @@ class ShellWindow(QMainWindow):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    # Forced standard font to prevent system-level rendering glitches
+    app.setFont(QFont("Arial", 10))
     window = ShellWindow()
     window.show()
     sys.exit(app.exec())
