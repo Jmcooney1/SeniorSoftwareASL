@@ -41,11 +41,10 @@ class WorkerThread(QThread):
     done_signal  = pyqtSignal()
     frame_signal = pyqtSignal(object, object, str)  # (raw_bgr, skel_bgr, word)
 
-    def __init__(self):
+    def __init__(self, sentence: str, db: DataBase):
         super().__init__()
-        self._build_ui()      # build widgets first
-        self._apply_theme()   # then apply styles (so all widgets exist)
-        QTimer.singleShot(100, self._load_database)
+        self.sentence = sentence
+        self.db       = db
 
     def _extract_with_preview(self, word: str, video_path: str):
         mp_drawing        = mp.solutions.drawing_utils
