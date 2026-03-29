@@ -1,0 +1,21 @@
+{
+    "name": "ASL Senior Project DevEnv",
+    "dockerFile": "../Dockerfile",
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-python.python", 
+                "ms-python.vscode-pylance"
+            ]
+        }
+    },
+    "runArgs": [
+        "--privileged",
+        "--net=host",
+        "--volume=/dev:/dev" 
+    ],
+    "containerEnv": { 
+        "DISPLAY": "host.docker.internal:0.0" 
+    },
+    "remoteUser": "root"
+}

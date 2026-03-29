@@ -1,4 +1,3 @@
 {
-    "dataset_path": "dataSet",
-    "save_dir": "savedVideoPoints"
+    "library_path": "C:/ASL senior software/SeniorSoftwareASL/googleMedaPipe/asl_motion_library.npy"
 }

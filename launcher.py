@@ -13,11 +13,6 @@ from PyQt6.QtGui import QFont
 
 # ── Config ───────────────────────────────────────────────────────────────────
 ROOT_DIR    = os.path.dirname(os.path.abspath(__file__))
-CONFIG_PATH = os.path.join(ROOT_DIR, "config.json")
-
-def load_config() -> dict:
-    if os.path.exists(CONFIG_PATH):
-        try:
             with open(CONFIG_PATH, "r") as f:
                 return json.load(f)
         except Exception:

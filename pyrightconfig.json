@@ -1,5 +1,6 @@
 {
   "venvPath": ".",
   "venv": "myenv",
+  "venv": ".env",
   "extraPaths": ["./googleMedaPipe"]
 }
