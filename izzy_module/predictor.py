@@ -1,5 +1,6 @@
 import os
 import cv2
+import json
 import numpy as np
 import mediapipe as mp
 from PyQt6.QtWidgets import (
@@ -8,15 +9,13 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QImage, QPixmap
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-
-
 class PredictorWidget(QWidget):
     def __init__(self):
         super().__init__()
 
-        # --- PATH SETUP ---
-        self.lib_path = os.path.join(SCRIPT_DIR, "googleMedaPipe", "asl_motion_library.npy")
+        # --- DYNAMIC PATH SETUP ---
+        # This climber finds config.json by moving up the folder tree
+        self.lib_path = self._get_library_path_from_config()
 
         # --- CONFIG ---
         self.library   = self._load_library()
@@ -41,27 +40,60 @@ class PredictorWidget(QWidget):
         self.timer = QTimer()
         self.timer.timeout.connect(self._update_frame)
 
-    # ── Library ──────────────────────────────────────────────────────────────
-    def _load_library(self):
-        print(f"🔍 Predictor looking for library: {self.lib_path}")
-        if not os.path.exists(self.lib_path):
-            print("❌ Library not found")
-            return {}
+    def _get_library_path_from_config(self):
+        """Climbs up from the current file to find config.json in the project root."""
         try:
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            
+            # Search up to 5 levels up for config.json
+            for _ in range(5):
+                config_file = os.path.join(current_dir, "config.json")
+                if os.path.exists(config_file):
+                    print(f"🎯 Found config.json at: {config_file}")
+                    with open(config_file, "r", encoding="utf-8") as f:
+                        cfg = json.load(f)
+                        path = cfg.get("library_path", "")
+                        if path:
+                            return os.path.abspath(path)
+                
+                # Move up one level
+                parent = os.path.dirname(current_dir)
+                if parent == current_dir: break
+                current_dir = parent
+                
+            print("❌ Error: config.json not found in any parent directories.")
+        except Exception as e:
+            print(f"⚠️ Error reading config.json: {e}")
+        return ""
+
+    # ── Library Loading ──────────────────────────────────────────────────────
+    def _load_library(self):
+        if not self.lib_path:
+            print("❌ No library path configured. Please check Launcher settings.")
+            return {}
+            
+        print(f"🔍 Predictor loading from: {self.lib_path}")
+        if not os.path.exists(self.lib_path):
+            print(f"❌ File not found at: {self.lib_path}")
+            return {}
+
+        try:
+            # allow_pickle=True is critical for loading saved dictionaries
             data = np.load(self.lib_path, allow_pickle=True).item()
-            print(f"✅ Loaded {len(data)} gestures: {list(data.keys())}")
+            print(f"✅ Successfully loaded {len(data)} gestures.")
             return data
         except Exception as e:
             print(f"❌ Load error: {e}")
             return {}
 
-    # ── UI ───────────────────────────────────────────────────────────────────
+    # ── UI Setup ─────────────────────────────────────────────────────────────
     def _init_ui(self):
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
         layout.setContentsMargins(14, 14, 14, 14)
 
-        self.status_bar = QLabel(f"Library: {len(self.library)} gestures loaded")
+        lib_count = len(self.library) if self.library else 0
+        self.status_bar = QLabel(f"Active Library: {lib_count} gestures")
         self.status_bar.setStyleSheet(
             "background: #0f172a; color: #38bdf8; padding: 10px; "
             "font-weight: bold; border-radius: 6px;"
@@ -76,37 +108,31 @@ class PredictorWidget(QWidget):
         layout.addWidget(self.feed, stretch=5)
 
         self.score_label = QLabel("Match Confidence: 0%")
-        self.score_label.setStyleSheet(
-            "color: #94a3b8; font-size: 18px; font-family: monospace;"
-        )
+        self.score_label.setStyleSheet("color: #94a3b8; font-size: 18px; font-family: monospace;")
         self.score_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.score_label)
 
         self.result_label = QLabel("READY")
-        self.result_label.setStyleSheet(
-            "font-size: 60px; color: #f8fafc; font-weight: 900;"
-        )
+        self.result_label.setStyleSheet("font-size: 60px; color: #f8fafc; font-weight: 900;")
         self.result_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.result_label)
 
         self.btn = QPushButton("START LIVE PREDICTOR")
         self.btn.clicked.connect(self._toggle_cam)
-        self.btn.setStyleSheet(
-            "padding: 20px; background: #2563eb; color: white; "
-            "font-weight: bold; border-radius: 10px;"
-        )
+        self.btn.setStyleSheet("padding: 20px; background: #2563eb; color: white; font-weight: bold; border-radius: 10px;")
         layout.addWidget(self.btn)
 
-    # ── Camera ───────────────────────────────────────────────────────────────
+    # ── Camera Logic ──
     def _toggle_cam(self):
         if self.cap is None:
             self.cap = cv2.VideoCapture(0)
+            if not self.cap.isOpened():
+                print("❌ Could not open camera")
+                self.cap = None
+                return
             self.timer.start(30)
             self.btn.setText("STOP PREDICTOR")
-            self.btn.setStyleSheet(
-                "padding: 20px; background: #dc2626; color: white; "
-                "font-weight: bold; border-radius: 10px;"
-            )
+            self.btn.setStyleSheet("padding: 20px; background: #dc2626; color: white; font-weight: bold; border-radius: 10px;")
         else:
             self._stop_cam()
 
@@ -116,53 +142,42 @@ class PredictorWidget(QWidget):
             self.cap.release()
             self.cap = None
         self.btn.setText("START LIVE PREDICTOR")
-        self.btn.setStyleSheet(
-            "padding: 20px; background: #2563eb; color: white; "
-            "font-weight: bold; border-radius: 10px;"
-        )
+        self.btn.setStyleSheet("padding: 20px; background: #2563eb; color: white; font-weight: bold; border-radius: 10px;")
         self.feed.setText("Camera Off")
 
-    # ── Core logic ───────────────────────────────────────────────────────────
+    # ── Prediction Logic ──
     def _compare_hybrid(self, v1, v2):
-        """Combines cosine similarity and euclidean distance for accuracy."""
-        if v1 is None or v2 is None:
-            return 0
+        if v1 is None or v2 is None: return 0
         v1, v2 = np.array(v1).flatten(), np.array(v2).flatten()
-        if v1.shape != v2.shape:
-            return 0
-
+        if v1.shape != v2.shape: return 0
         norm = np.linalg.norm(v1) * np.linalg.norm(v2)
         cos_score = np.dot(v1, v2) / norm if norm > 0 else 0
-
-        dist      = np.linalg.norm(v1 - v2)
+        dist = np.linalg.norm(v1 - v2)
         euc_score = np.exp(-0.85 * dist)
-
         return (cos_score * 0.4) + (euc_score * 0.6)
 
     def _update_frame(self):
         ret, frame = self.cap.read()
-        if not ret:
-            return
+        if not ret: return
 
         frame = cv2.flip(frame, 1)
-        rgb   = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         results = self.hands.process(rgb)
 
         live_hands = {"left": None, "right": None}
         if results.multi_hand_landmarks:
             for lms in results.multi_hand_landmarks:
                 side = "left" if lms.landmark[0].x < 0.5 else "right"
-                pts   = np.array([[lm.x, lm.y, lm.z * self.Z_SCALE] for lm in lms.landmark])
+                pts = np.array([[lm.x, lm.y, lm.z * self.Z_SCALE] for lm in lms.landmark])
                 wrist = pts[0]
                 scale = np.linalg.norm(pts[0] - pts[5]) or 1.0
-                norm  = ((pts - wrist) / scale).flatten()
+                norm = ((pts - wrist) / scale).flatten()
 
                 if self.history[side] is None:
                     self.history[side] = norm
                 else:
-                    self.history[side] = (
-                        (self.ALPHA * norm) + ((1 - self.ALPHA) * self.history[side])
-                    )
+                    self.history[side] = (self.ALPHA * norm) + ((1 - self.ALPHA) * self.history[side])
+                
                 live_hands[side] = self.history[side]
                 self.mp_draw.draw_landmarks(frame, lms, self.mp_hands.HAND_CONNECTIONS)
 
@@ -175,40 +190,30 @@ class PredictorWidget(QWidget):
                     c_l, c_r = live_hands["left"], live_hands["right"]
                     score_l = self._compare_hybrid(s_l, c_l) if s_l is not None else (1.0 if c_l is None else 0.0)
                     score_r = self._compare_hybrid(s_r, c_r) if s_r is not None else (1.0 if c_r is None else 0.0)
-                    score   = (score_l + score_r) / 2
+                    score = (score_l + score_r) / 2
                 else:
-                    side  = "left" if "_left_" in label else "right"
+                    side = "left" if "_left" in label.lower() else "right"
                     score = self._compare_hybrid(ref, live_hands[side])
 
                 if score > top_score:
                     top_score = score
-                    top_name  = label.split("_")[0].upper()
+                    top_name = label.split("_")[0].upper()
 
-        # Update UI
-        self.score_label.setText(f"Match Confidence: {int(top_score * 100)}%  ({top_name})")
-
+        self.score_label.setText(f"Match: {int(top_score * 100)}% ({top_name})")
         if top_score > self.THRESHOLD:
             self.result_label.setText(top_name)
-            self.result_label.setStyleSheet(
-                "font-size: 60px; color: #4ade80; font-weight: 900;"
-            )
+            self.result_label.setStyleSheet("font-size: 60px; color: #4ade80; font-weight: 900;")
         else:
             self.result_label.setText("SEARCHING...")
-            self.result_label.setStyleSheet(
-                "font-size: 60px; color: #475569; font-weight: 900;"
-            )
+            self.result_label.setStyleSheet("font-size: 60px; color: #475569; font-weight: 900;")
 
         h, w, ch = frame.shape
         qimg = QImage(frame.data, w, h, ch * w, QImage.Format.Format_BGR888)
-        self.feed.setPixmap(
-            QPixmap.fromImage(qimg).scaled(
-                self.feed.size(),
-                Qt.AspectRatioMode.KeepAspectRatio
-            )
-        )
+        self.feed.setPixmap(QPixmap.fromImage(qimg).scaled(self.feed.size(), Qt.AspectRatioMode.KeepAspectRatio))
 
-    # ── Cleanup ──────────────────────────────────────────────────────────────
     def hideEvent(self, event):
-        """Stop camera when tab is switched away."""
         self._stop_cam()
         super().hideEvent(event)
+
+def get_tab():
+    return PredictorWidget()
