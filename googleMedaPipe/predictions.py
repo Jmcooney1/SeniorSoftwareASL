@@ -4,9 +4,7 @@ import os
 from collections import deque
 
 class OneEuroFilter:
-    """
-    Industry-standard smoothing filter to reduce jitter in hand landmarks.
-    """
+    """Smoothes hand landmarks to reduce camera jitter."""
     def __init__(self, min_cutoff=1.0, beta=0.1, d_cutoff=1.0):
         self.min_cutoff = min_cutoff
         self.beta = beta
@@ -23,16 +21,12 @@ class OneEuroFilter:
         if self.t_prev is None:
             self.t_prev, self.x_prev, self.dx_prev = t, x, 0.0
             return x
-
         te = t - self.t_prev
         if te <= 0: return x 
-
         dx = (x - self.x_prev) / te
         edx = self._low_pass(dx, self.dx_prev, self._get_alpha(te, self.d_cutoff))
-        
         cutoff = self.min_cutoff + self.beta * abs(edx)
         alpha = self._get_alpha(te, cutoff)
-        
         result = self._low_pass(x, self.x_prev, alpha)
         self.t_prev, self.x_prev, self.dx_prev = t, result, edx
         return result
@@ -46,129 +40,113 @@ class MotionPredictor:
         self.window_size = window_size
         self.library = self.load_library(library_file)
         
-        # Multi-hand data tracking
         self.hands_data = {
             'left': {
-                'buffer': deque(maxlen=window_size),
-                'filters': [OneEuroFilter() for _ in range(63)], # 21 landmarks * 3 (x,y,z)
-                'last_pred_time': 0
+                'buffer': deque(maxlen=window_size), 
+                'filters': [OneEuroFilter() for _ in range(63)], 
+                'last_time': 0
             },
             'right': {
-                'buffer': deque(maxlen=window_size),
-                'filters': [OneEuroFilter() for _ in range(63)],
-                'last_pred_time': 0
+                'buffer': deque(maxlen=window_size), 
+                'filters': [OneEuroFilter() for _ in range(63)], 
+                'last_time': 0
             }
         }
         
-        self.prediction_cooldown = 0.6  # Seconds between repeat predictions
-        self.min_dist_threshold = 15.0 # Maximum allowed distance for a 'match'
+        self.prediction_cooldown = 0.35
+        # Increased threshold slightly to prevent "flickering" off/on
+        self.min_dist_threshold = 30.0 
 
     def load_library(self, path):
         if os.path.exists(path):
             try:
                 data = np.load(path, allow_pickle=True).item()
-                print(f"✅ Motion Library Loaded: {len(data)} entries found.")
+                print(f"✅ Library Loaded: {len(data)} entries.")
                 return data
-            except Exception as e:
-                print(f"❌ Error loading library: {e}")
-                return {}
-        print(f"⚠️ Warning: {path} not found.")
+            except: return {}
         return {}
 
     def process_frame(self, hand_landmarks, side_label):
         """
-        Main entry point: Call this every frame for each detected hand.
+        Returns (word, confidence_percentage)
         """
         side = side_label.lower()
-        if side not in self.hands_data:
-            return "..."
+        if side not in self.hands_data: 
+            return "...", 0
 
-        # 1. Extract and Normalize (Wrist at 0,0,0)
+        ## ... (keep normalization and filtering exactly the same) ...
         raw_pts = np.array([[lm.x, lm.y, lm.z] for lm in hand_landmarks.landmark])
-        normalized = (raw_pts - raw_pts[0]).flatten()
+        wrist = raw_pts[0]
+        scale = np.linalg.norm(raw_pts[0] - raw_pts[9]) or 1.0
+        normalized = ((raw_pts - wrist) / scale).flatten()
 
-        # 2. Smooth the data
         filtered_data = np.array([
             self.hands_data[side]['filters'][i].filter(normalized[i]) 
             for i in range(len(normalized))
         ])
-        
         self.hands_data[side]['buffer'].append(filtered_data)
 
-        # 3. Prediction Logic
         current_time = time.time()
         hand = self.hands_data[side]
         
-        # We need a minimum amount of data to compare trajectories
-        if len(hand['buffer']) >= 18:
-            if (current_time - hand['last_pred_time']) > self.prediction_cooldown:
-                
-                is_still = self._is_hand_still(hand['buffer'])
-                prediction = self._analyze_window(side, is_still)
-                
-                if prediction != "...":
-                    hand['last_pred_time'] = current_time
-                    # Pop some frames so the same motion doesn't trigger twice instantly
-                    for _ in range(12): 
-                        if hand['buffer']: hand['buffer'].popleft()
-                    return prediction
+        if len(hand['buffer']) >= 10:
+            word, raw_dist = self._analyze_window(side)
+            
+            # --- TOUGHER GRADING LOGIC ---
+            # We calculate a 'linear' ratio first (0.0 to 1.0)
+            ratio = max(0, min(1, (1 - (raw_dist / self.min_dist_threshold))))
+            
+            # Applying a Power Curve (ratio^2 or ratio^3) makes the high scores harder to get.
+            # Example: A ratio of 0.9 (which was 90%) now becomes 0.9 * 0.9 = 0.81 (81%)
+            # You have to be EXTREMELY close to get that 95%+.
+            confidence = int((ratio ** 2) * 100)
+            
+            # We trigger the word if the confidence is high enough (e.g., > 60%)
+            if word != "..." and (current_time - hand['last_time']) > self.prediction_cooldown:
+                if confidence > 60: 
+                    hand['last_time'] = current_time
+                    return word, confidence
+            
+            return "...", confidence
         
-        return "..."
+        return "...", 0
 
-    def _is_hand_still(self, buffer):
-        """Detects if the hand is holding a pose vs moving."""
-        recent = np.array(list(buffer))[-5:]
-        variance = np.var(recent, axis=0).mean()
-        return variance < 0.0009
+    def _analyze_window(self, side):
+        """Finds the closest match. Returns (best_label, distance)"""
+        current_pose = self.hands_data[side]['buffer'][-1]
+        best_label = "..."
+        lowest_dist = 999.0 
 
-    def _analyze_window(self, side, is_still):
-        """
-        Compares current buffer against ALL library entries.
-        Returns the clean label of the mathematically closest match.
-        """
-        current_window = np.array(list(self.hands_data[side]['buffer']))
-        
-        best_match_label = "..."
-        # Start with the threshold and look for the absolute minimum
-        lowest_dist = 6.0 if is_still else self.min_dist_threshold
+        for full_label, lib_seq in self.library.items():
+            try:
+                if hasattr(lib_seq, 'shape') and len(lib_seq.shape) > 1:
+                    lib_pose = lib_seq[-1]
+                else:
+                    lib_pose = lib_seq
+                
+                if len(current_pose) != len(lib_pose.flatten()): 
+                    continue
+                
+                dist = np.linalg.norm(current_pose - lib_pose.flatten())
 
-        for full_label, lib_sequence in self.library.items():
-            # Only compare right-hand live data to right-hand recordings
-            if side not in full_label.lower():
+                if dist < lowest_dist:
+                    lowest_dist = dist
+                    parts = full_label.split('_')
+                    if len(parts) > 1:
+                        best_label = parts[1] if parts[0].lower() in ['left', 'right'] else parts[0]
+                    else:
+                        best_label = full_label
+            except:
                 continue
 
-            # Distance Comparison
-            if is_still:
-                # Compare the single latest hand pose
-                v1 = current_window[-1]
-                v2 = lib_sequence[-1]
-            else:
-                # Compare the trajectory 'snake' (last 20 frames)
-                comp_len = min(len(current_window), len(lib_sequence), 20)
-                v1 = current_window[-comp_len:].flatten()
-                v2 = lib_sequence[-comp_len:].flatten()
-            
-            # Euclidean distance (lower is better)
-            dist = np.linalg.norm(v1 - v2)
-            
-            if dist < lowest_dist:
-                lowest_dist = dist
-                
-                # Cleanup: Strips "Right_Ride_3" -> "Ride"
-                parts = full_label.split('_')
-                if len(parts) >= 2:
-                    # If format is Side_Word_Num, index 1 is the word
-                    # If format is Word_Num, index 0 is the word
-                    best_match_label = parts[1] if side in parts[0].lower() else parts[0]
-                else:
-                    best_match_label = full_label
-
-        return best_match_label
+        # If the distance is above our threshold, we don't return the word,
+        # but we ALWAYS return the lowest_dist so the meter can show it.
+        final_label = best_label if lowest_dist < self.min_dist_threshold else "..."
+        return final_label, lowest_dist
 
     def reset_hand(self, side):
-        """Call this if a hand leaves the screen."""
-        side = side.lower()
-        if side in self.hands_data:
-            self.hands_data[side]['buffer'].clear()
-            for f in self.hands_data[side]['filters']:
+        s = side.lower()
+        if s in self.hands_data:
+            self.hands_data[s]['buffer'].clear()
+            for f in self.hands_data[s]['filters']:
                 f.x_prev = f.dx_prev = f.t_prev = None

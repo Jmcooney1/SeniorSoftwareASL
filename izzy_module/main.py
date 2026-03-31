@@ -5,6 +5,7 @@ Contains two sub-tabs: Live Predictor and Motion Trainer.
 """
 import os
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QTabWidget
+from googleMedaPipe.predictions import MotionPredictor
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
