@@ -8,7 +8,7 @@ from PIL import Image, ImageTk
 # This fallback only fires if you run translationquiz.py directly (not via the launcher)
 _FALLBACK_DIR = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
-    "..", "dataSet", "drew-dataset", "asl_letters"
+    "..", "dataSet", "drew_dataset", "asl_letters"
 )
 
 IMG_SIZE      = (320, 320)

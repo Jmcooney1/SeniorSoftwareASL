@@ -2,7 +2,7 @@ import re
 import cv2
 import os
 import shutil
-from database import DataBase
+from dataSet.kily_dataset.database import DataBase
 from SkeletonExtractor import SkeletonExtractor
 import projectPoints as projectPoints
 

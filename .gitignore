@@ -7,7 +7,7 @@ mp_env/
 myenv/
 
 # Dataset (too large for git)
-dataSet/kily-dataset/*
+dataSet/kily_dataset/*
 
 # Build output (setup.sh rebuilds these)
 dist/

@@ -134,7 +134,7 @@ class SettingsPage(QWidget):
 
         layout.addWidget(self._field_label(
             "📁  Dataset Folder",
-            "The folder that contains kily-dataset/, drew-dataset/, etc."))
+            "The folder that contains kily_dataset/, drew_dataset/, etc."))
         ds_row = QHBoxLayout()
         self.dataset_field = QLineEdit()
         self.dataset_field.setPlaceholderText("e.g.  dataSet  or  /absolute/path/to/dataSet")
@@ -191,12 +191,12 @@ class SettingsPage(QWidget):
             self.path_preview.setText("")
             return
         def check(p): return "✅" if os.path.isdir(p) else "❌ not found"
-        kily = os.path.join(base, "kily-dataset", "wlasl-complete")
-        drew = os.path.join(base, "drew-dataset")
+        kily = os.path.join(base, "kily_dataset", "wlasl-complete")
+        drew = os.path.join(base, "drew_dataset")
         self.path_preview.setText(
             f"  Resolved: {base}\n"
-            f"  kily-dataset/wlasl-complete/  {check(kily)}\n"
-            f"  drew-dataset/                 {check(drew)}"
+            f"  kily_dataset/wlasl-complete/  {check(kily)}\n"
+            f"  drew_dataset/                 {check(drew)}"
         )
 
     def _load_existing(self):

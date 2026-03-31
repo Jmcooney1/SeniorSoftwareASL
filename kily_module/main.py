@@ -28,7 +28,7 @@ def _load_paths():
 
 
 _BASE,    SAVE_DIR     = _load_paths()
-DB_PATH      = os.path.join(_BASE, "kily-dataset", "wlasl-complete")
+DB_PATH      = os.path.join(_BASE, "kily_dataset", "wlasl-complete")
 VIDEO_FOLDER = os.path.join(DB_PATH, "videos")
 VIDEO_INDEX  = os.path.join(DB_PATH, "wlasl_class_list.txt")
 

@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt6.QtGui import QColor, QImage, QPixmap
 
-from kily_module.database import DataBase
+from dataSet.kily_dataset.database import DataBase
 import kily_module.projectPoints as projectPoints
 import mediapipe as mp
 

@@ -39,7 +39,7 @@ def _load_paths():
 
 
 _BASE, SAVE_DIR = _load_paths()
-DATA_DIR = os.path.join(_BASE, "drew-dataset", "asl_letters")
+DATA_DIR = os.path.join(_BASE, "drew_dataset", "asl_letters")
 
 
 # ── Shared button styles ──────────────────────────────────────────────────────
