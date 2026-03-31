@@ -45,11 +45,20 @@ def config_is_valid(cfg: dict) -> bool:
     lib_ok = bool(cfg.get("library_path")) and os.path.isfile(_resolve(cfg["library_path"]))
     return ds_ok and lib_ok
 
-
-# ── Module discovery ──────────────────────────────────────────────────────────
 def discover_modules() -> list:
+    """
+    Scans for folders containing __init__.py and main.py.
+    Checks ROOT_DIR and izzy_module.
+    """
     modules = []
-    skip = {".env", "env", "venv", ".git", "__pycache__", "build", "dist", "download_imges"}
+    # Add googleMedaPipe to skip ONLY if you don't want it to show up as a Tab.
+    # If you WANT googleMedaPipe to be a tab, remove it from this skip list.
+    skip = {
+        ".env", "env", "venv", ".git", "__pycache__", 
+        "build", "dist", "download_imges", "dataSet"
+    }
+
+    # Search in Root AND in izzy_module
     search_dirs = [ROOT_DIR]
     izzy_path = os.path.join(ROOT_DIR, "izzy_module")
     if os.path.isdir(izzy_path):
@@ -59,11 +68,16 @@ def discover_modules() -> list:
         if not os.path.exists(s_dir): continue
         for entry in sorted(os.listdir(s_dir)):
             folder_path = os.path.join(s_dir, entry)
+            
+            # Skip files, hidden folders, and our skip list
             if not os.path.isdir(folder_path) or entry in skip or entry.startswith("."):
                 continue
+            
+            # Must have these two files to be a valid 'tab'
             if (os.path.exists(os.path.join(folder_path, "__init__.py")) and 
                 os.path.exists(os.path.join(folder_path, "main.py"))):
                 
+                # Metadata check
                 info_path = os.path.join(folder_path, "module_info.json")
                 try:
                     with open(info_path, "r", encoding="utf-8") as f:
@@ -71,13 +85,21 @@ def discover_modules() -> list:
                 except:
                     info = {}
 
-                import_prefix = "izzy_module." if "izzy_module" in s_dir else ""
+                # IMPROVED IMPORT LOGIC:
+                # If the folder is inside izzy_module, we need that prefix.
+                # If it's in the root, no prefix is needed.
+                if s_dir == izzy_path:
+                    import_path = f"izzy_module.{entry}.main"
+                else:
+                    import_path = f"{entry}.main"
+                
                 modules.append({
-                    "import_path": f"{import_prefix}{entry}.main",
+                    "import_path": import_path,
                     "name": info.get("name", entry.replace("_", " ").title()),
                     "emoji": info.get("emoji", "📦")
                 })
     return modules
+
 
 # ── Styles ────────────────────────────────────────────────────────────────────
 BTN_PRIMARY = "background: #2563eb; color: white; border-radius: 8px; padding: 12px; font-weight: bold;"
