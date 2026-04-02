@@ -2,11 +2,11 @@ import os
 import cv2
 import numpy as np
 import mediapipe as mp
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QPushButton
 )
-from PyQt6.QtCore import QTimer, Qt
-from PyQt6.QtGui import QImage, QPixmap
+from PySide6.QtCore import QTimer, Qt
+from PySide6.QtGui import QImage, QPixmap
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 

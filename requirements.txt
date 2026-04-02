@@ -20,12 +20,11 @@ pycparser==3.0
 pyinstaller==6.19.0
 pyinstaller-hooks-contrib==2026.2
 pyparsing==3.3.2
-PyQt6==6.10.2
-PyQt6-Qt6==6.10.2
-PyQt6_sip==13.11.0
+PySide6
 python-dateutil==2.9.0.post0
 six==1.17.0
 sounddevice==0.5.5
 fastdtw
 scipy
 panda3d==1.10.16
+QPanda3D==0.2.10

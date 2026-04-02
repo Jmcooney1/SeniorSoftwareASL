@@ -9,15 +9,15 @@ SCRIPT_DIR            = os.path.dirname(os.path.abspath(__file__))
 GOOGLE_MEDIA_PIPE_DIR = os.path.join(SCRIPT_DIR, "googleMedaPipe")
 sys.path.insert(0, GOOGLE_MEDIA_PIPE_DIR)
 
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout, QHBoxLayout, QLabel,
     QLineEdit, QPushButton, QTextEdit,
     QTableWidget, QTableWidgetItem, QHeaderView,
     QFrame, QTabWidget
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
-from PyQt6.QtGui import QColor, QImage, QPixmap
+from PySide6.QtCore import Qt, QThread, Signal, QTimer
+from PySide6.QtGui import QColor, QImage, QPixmap
 
 from kily_module.database import DataBase
 import kily_module.projectPoints as projectPoints
@@ -37,9 +37,9 @@ def numpy_to_pixmap(frame_bgr, w, h):
 
 # ── Worker Thread ────────────────────────────────────────────────────────────
 class WorkerThread(QThread):
-    log_signal   = pyqtSignal(str)
-    done_signal  = pyqtSignal()
-    frame_signal = pyqtSignal(object, object, str)  # (raw_bgr, skel_bgr, word)
+    log_signal   = Signal(str)
+    done_signal  = Signal()
+    frame_signal = Signal(object, object, str)  # (raw_bgr, skel_bgr, word)
 
     def __init__(self, sentence: str, db: DataBase):
         super().__init__()

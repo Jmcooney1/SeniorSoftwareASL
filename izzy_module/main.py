@@ -4,7 +4,7 @@ Exposes get_tab() -> QWidget for the root launcher.
 Contains two sub-tabs: Live Predictor and Motion Trainer.
 """
 import os
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QTabWidget
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QTabWidget
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
