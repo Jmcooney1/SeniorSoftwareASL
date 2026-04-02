@@ -22,21 +22,25 @@ class TrainerWidget(QWidget):
 
         # --- CONFIG ---
         self.RECORD_DURATION = 2.5
-        self.ALPHA = 0.3 # Smoothing for the preview
+        self.ALPHA = 0.3 # Smoothing alpha
 
         # --- STATE ---
         self.history = {"left": None, "right": None}
         self.recording = False
         self.sequence = [] 
         self.cap = None
-        self.last_saved_key = None
         self.start_time = None
 
         # --- MEDIAPIPE ---
+        # 1. Hands
         self.mp_hands = mp.solutions.hands
         self.hands = self.mp_hands.Hands(
             model_complexity=1, max_num_hands=2,
             min_detection_confidence=0.8, min_tracking_confidence=0.8
+        )
+        # 2. Face (For Nose Anchor)
+        self.face_detector = mp.solutions.face_detection.FaceDetection(
+            model_selection=0, min_detection_confidence=0.5
         )
         self.mp_draw = mp.solutions.drawing_utils
 
@@ -59,7 +63,6 @@ class TrainerWidget(QWidget):
         layout = QVBoxLayout(self)
         layout.setSpacing(15)
         
-        # Config Panel
         config_panel = QFrame()
         config_panel.setStyleSheet("background: #f1f5f9; border-radius: 12px; border: 1px solid #cbd5e1;")
         config_layout = QVBoxLayout(config_panel)
@@ -85,14 +88,12 @@ class TrainerWidget(QWidget):
         config_layout.addLayout(mode_row)
         layout.addWidget(config_panel)
 
-        # Camera
         self.feed = QLabel("Camera Offline")
         self.feed.setMinimumSize(640, 480)
         self.feed.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.feed.setStyleSheet("background: #0f172a; border-radius: 15px; border: 5px solid #334155;")
         layout.addWidget(self.feed, stretch=5)
 
-        # Decision Row
         self.decision_widget = QWidget()
         d_layout = QHBoxLayout(self.decision_widget)
         self.save_btn = QPushButton("✔ SAVE GESTURE")
@@ -106,7 +107,6 @@ class TrainerWidget(QWidget):
         self.decision_widget.hide()
         layout.addWidget(self.decision_widget)
 
-        # Controls
         self.control_widget = QWidget()
         c_layout = QHBoxLayout(self.control_widget)
         self.cam_btn = QPushButton("START CAMERA")
@@ -166,21 +166,25 @@ class TrainerWidget(QWidget):
         if not ret: return
         frame = cv2.flip(frame, 1)
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        results = self.hands.process(rgb)
 
+        # 1. Detect Face for Nose Anchor
+        face_results = self.face_detector.process(rgb)
+        nose_lm = None
+        if face_results.detections:
+            nose_lm = mp.solutions.face_detection.get_key_point(
+                face_results.detections[0], mp.solutions.face_detection.FaceKeyPoint.NOSE_TIP
+            )
+
+        # 2. Detect Hands
+        results = self.hands.process(rgb)
         curr_hands = {"left": None, "right": None}
 
         if results.multi_hand_landmarks:
             for i, lms in enumerate(results.multi_hand_landmarks):
                 side = results.multi_handedness[i].classification[0].label.lower()
                 
-                # NORMALIZE (Wrist center + Unit Scale)
-                pts = np.array([[lm.x, lm.y, lm.z] for lm in lms.landmark])
-                wrist = pts[0]
-                scale = np.linalg.norm(pts[0] - pts[9]) or 1.0
-                norm_pts = ((pts - wrist) / scale).flatten()
-                
-                curr_hands[side] = norm_pts
+                # --- SYNCED NORMALIZATION: Hand Shape + Nose Spatial ---
+                curr_hands[side] = self._get_complex_norm(lms, nose_lm, side)
                 self.mp_draw.draw_landmarks(frame, lms, self.mp_hands.HAND_CONNECTIONS)
 
         if self.recording:
@@ -189,15 +193,15 @@ class TrainerWidget(QWidget):
             cv2.rectangle(frame, (0,0), (bar_w, 20), (59, 130, 246), -1)
 
             if not self.mode_btn.isChecked():
-                # DUAL MODE: Save both hands
+                # DUAL MODE: 66 features per hand
                 self.sequence.append({
-                    "left": curr_hands["left"] if curr_hands["left"] is not None else np.zeros(63),
-                    "right": curr_hands["right"] if curr_hands["right"] is not None else np.zeros(63)
+                    "left": curr_hands["left"] if curr_hands["left"] is not None else np.zeros(66),
+                    "right": curr_hands["right"] if curr_hands["right"] is not None else np.zeros(66)
                 })
             else:
-                # SINGLE MODE: Save target hand as a direct array
+                # SINGLE MODE: 66 features
                 target = "left" if "LEFT" in self.side_btn.text() else "right"
-                self.sequence.append(curr_hands[target] if curr_hands[target] is not None else np.zeros(63))
+                self.sequence.append(curr_hands[target] if curr_hands[target] is not None else np.zeros(66))
 
             if elapsed >= self.RECORD_DURATION:
                 self.recording = False
@@ -207,6 +211,34 @@ class TrainerWidget(QWidget):
         h, w, ch = frame.shape
         qimg = QImage(frame.data, w, h, ch * w, QImage.Format.Format_BGR888)
         self.feed.setPixmap(QPixmap.fromImage(qimg).scaled(self.feed.size(), Qt.AspectRatioMode.KeepAspectRatio))
+
+    def _get_complex_norm(self, hand_lms, nose_lm, side):
+        # 1. Hand Shape (63 features)
+        pts = np.array([[lm.x, lm.y, lm.z] for lm in hand_lms.landmark])
+        wrist = pts[0]
+        hand_shape = ((pts - wrist) * 10).flatten() 
+        
+        # 2. Global Position (3 features)
+        if nose_lm:
+            # FIXED: Default Z to 0 to match Predictor and prevent AttributeError
+            spatial_pos = np.array([
+                wrist[0] - nose_lm.x,
+                wrist[1] - nose_lm.y,
+                0
+            ]) * 10 
+        else:
+            spatial_pos = np.zeros(3)
+
+        # 3. Combine to 66 features
+        combined = np.concatenate([hand_shape, spatial_pos])
+
+        # Apply smoothing
+        if self.history[side] is None:
+            self.history[side] = combined
+        else:
+            self.history[side] = (self.ALPHA * combined) + ((1 - self.ALPHA) * self.history[side])
+        
+        return self.history[side]
 
     def _save_data(self):
         name = self.name_input.text().strip().lower()
@@ -233,6 +265,10 @@ class TrainerWidget(QWidget):
         self.control_widget.show()
         self.name_input.setEnabled(True)
         self._toggle_camera()
+
+    def hideEvent(self, event):
+        self._stop_camera()
+        super().hideEvent(event)
 
 def get_tab():
     return TrainerWidget()

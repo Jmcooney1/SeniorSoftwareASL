@@ -40,9 +40,17 @@ def _resolve(path: str) -> str:
     return path
 
 def config_is_valid(cfg: dict) -> bool:
-    """Checks if both the dataset directory and library file exist."""
-    ds_ok = bool(cfg.get("dataset_path")) and os.path.isdir(_resolve(cfg["dataset_path"]))
-    lib_ok = bool(cfg.get("library_path")) and os.path.isfile(_resolve(cfg["library_path"]))
+    """Checks if the dataset exists and if the library path is at least pointing to a valid folder."""
+    ds_path = _resolve(cfg.get("dataset_path", ""))
+    lib_path = _resolve(cfg.get("library_path", ""))
+    
+    # Dataset MUST be a real folder
+    ds_ok = bool(ds_path) and os.path.isdir(ds_path)
+    
+    # Library just needs the FOLDER it lives in to exist (so we can create the file)
+    lib_dir = os.path.dirname(lib_path) if lib_path else ""
+    lib_ok = bool(lib_path) and os.path.isdir(lib_dir)
+    
     return ds_ok and lib_ok
 
 def discover_modules() -> list:

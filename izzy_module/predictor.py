@@ -19,10 +19,18 @@ class PredictorWidget(QWidget):
         self.engine = MotionPredictor(library_file=self.lib_path)
         
         self.cap = None
+        
+        # --- MEDIAPIPE SOLUTIONS ---
+        # 1. Hand Tracking
         self.mp_hands = mp.solutions.hands
         self.hands = self.mp_hands.Hands(
             min_detection_confidence=0.7, 
             min_tracking_confidence=0.7
+        )
+        # 2. Face Detection (For the Nose Anchor)
+        self.face_detector = mp.solutions.face_detection.FaceDetection(
+            model_selection=0, 
+            min_detection_confidence=0.5
         )
         self.mp_draw = mp.solutions.drawing_utils
 
@@ -32,7 +40,6 @@ class PredictorWidget(QWidget):
         self.timer.timeout.connect(self._update_frame)
 
     def _get_library_path_from_config(self):
-        """Finds config.json in the root to get the central .npy path."""
         curr = os.path.dirname(os.path.abspath(__file__))
         for _ in range(5):
             cfg_p = os.path.join(curr, "config.json")
@@ -46,45 +53,32 @@ class PredictorWidget(QWidget):
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
         
-        # Status Label
         self.status = QLabel(f"Status: {len(self.engine.library)} Signs Loaded")
         self.status.setStyleSheet("color: #38bdf8; font-weight: bold; background: #0f172a; padding: 10px; border-radius: 5px;")
         layout.addWidget(self.status)
 
-        # Confidence Meter
         self.conf_meter = QLabel("Match Confidence: 0%")
-        self.conf_meter.setFixedHeight(40)
+        self.conf_meter.setFixedHeight(45)
         self.conf_meter.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.conf_meter.setStyleSheet("""
-            background: #1e293b; 
-            color: #94a3b8; 
-            font-size: 16px; 
-            font-weight: bold; 
-            border-radius: 8px;
-            border: 2px solid #334155;
-        """)
+        self.conf_meter.setStyleSheet("background: #1e293b; color: #94a3b8; font-size: 16px; font-weight: bold; border-radius: 8px; border: 2px solid #334155;")
         layout.addWidget(self.conf_meter)
 
-        # Camera Feed
         self.feed = QLabel("Camera Off")
         self.feed.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.feed.setStyleSheet("background: black; border-radius: 10px; border: 3px solid #1e293b;")
         layout.addWidget(self.feed, stretch=5)
 
-        # Prediction Result
         self.result_label = QLabel("READY")
         self.result_label.setStyleSheet("font-size: 80px; color: #f8fafc; font-weight: 900;")
         self.result_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.result_label)
 
-        # Controls
         self.btn = QPushButton("START LIVE PREDICTOR")
         self.btn.clicked.connect(self._toggle_cam)
         self.btn.setStyleSheet("padding: 20px; background: #2563eb; color: white; font-weight: bold; border-radius: 10px;")
         layout.addWidget(self.btn)
 
     def showEvent(self, event):
-        """Automatically reloads library when switching to this tab."""
         if hasattr(self, 'engine'):
             self.engine.library = self.engine.load_library(self.lib_path)
             self.status.setText(f"Status: {len(self.engine.library)} Signs Loaded")
@@ -93,9 +87,10 @@ class PredictorWidget(QWidget):
     def _toggle_cam(self):
         if self.cap is None:
             self.cap = cv2.VideoCapture(0)
-            self.timer.start(30)
-            self.btn.setText("STOP PREDICTOR")
-            self.btn.setStyleSheet("padding: 20px; background: #dc2626; color: white; font-weight: bold; border-radius: 10px;")
+            if self.cap.isOpened():
+                self.timer.start(30)
+                self.btn.setText("STOP PREDICTOR")
+                self.btn.setStyleSheet("padding: 20px; background: #dc2626; color: white; font-weight: bold; border-radius: 10px;")
         else:
             self._stop_cam()
 
@@ -114,67 +109,73 @@ class PredictorWidget(QWidget):
         
         frame = cv2.flip(frame, 1)
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        
+        # --- 1. DETECT FACE (For Nose Anchor) ---
+        face_results = self.face_detector.process(rgb)
+        nose_point = None
+        if face_results.detections:
+            # MediaPipe Face Detection keypoint 0 is typically the Nose Tip
+            nose_point = mp.solutions.face_detection.get_key_point(
+                face_results.detections[0], 
+                mp.solutions.face_detection.FaceKeyPoint.NOSE_TIP
+            )
+
+        # --- 2. DETECT HANDS ---
         results = self.hands.process(rgb)
+
+        best_word = "..."
+        best_conf = 0
+        current_visible_sides = []
 
         if results.multi_hand_landmarks:
             for i, lms in enumerate(results.multi_hand_landmarks):
                 side = results.multi_handedness[i].classification[0].label
-                word, conf = self.engine.process_frame(lms, side)
+                current_visible_sides.append(side.lower())
                 
-                self.conf_meter.setText(f"Match Confidence: {conf}%")
+                # --- UPDATED: Pass nose_point to engine ---
+                word, conf = self.engine.process_frame(lms, side, nose_point)
                 
-                # --- TOUGHER COLOR GRADIENTS ---
-                if conf >= 95:
-                    # ELITE MATCH: Glowing Cyan/Green
-                    meter_color = "#22d3ee" 
-                    status_text = f"🌟 PERFECT: {conf}%"
-                elif conf >= 80:
-                    # GREAT MATCH: Solid Green
-                    meter_color = "#4ade80"
-                    status_text = f"Match Confidence: {conf}%"
-                elif conf >= 60:
-                    # OKAY: Yellow
-                    meter_color = "#fbbf24"
-                    status_text = f"Getting Closer... {conf}%"
-                else:
-                    # POOR: Red
-                    meter_color = "#f87171"
-                    status_text = "Searching..."
-
-                self.conf_meter.setText(status_text)
-                self.conf_meter.setStyleSheet(f"""
-                    background: #0f172a; color: {meter_color}; 
-                    font-size: 16px; font-weight: 900; 
-                    border-radius: 8px; border: 2px solid {meter_color};
-                """)
-
-                if word != "..." and conf > 60:
-                    self.result_label.setText(word)
-                    self.result_label.setStyleSheet(f"font-size: 90px; color: {meter_color}; font-weight: 900;")
-                elif conf < 30:
-                    self.result_label.setText("SEARCHING...")
-                    self.result_label.setStyleSheet("font-size: 80px; color: #475569; font-weight: 900;")
-
-                # --- SMOOTH WORD UPDATE ---
-                # Only change the label text if a real word is detected.
-                # This prevents it from flickering to "READY" if conf drops slightly.
-                if word != "...":
-                    self.result_label.setText(word)
-                    self.result_label.setStyleSheet(f"font-size: 80px; color: {meter_color}; font-weight: 900;")
-                elif conf < 20:
-                    # Only reset text if confidence is extremely low (meaning user moved away)
-                    self.result_label.setText("SEARCHING...")
-                    self.result_label.setStyleSheet("font-size: 80px; color: #475569; font-weight: 900;")
+                if conf > best_conf:
+                    best_conf = conf
+                    best_word = word
                 
                 self.mp_draw.draw_landmarks(frame, lms, self.mp_hands.HAND_CONNECTIONS)
+
+            # --- UPDATE CONFIDENCE UI ---
+            if best_conf >= 95:
+                color = "#22d3ee" # Cyan
+                text = f"🌟 PERFECT: {best_conf}%"
+            elif best_conf >= 80:
+                color = "#4ade80" # Green
+                text = f"Match Confidence: {best_conf}%"
+            elif best_conf >= 60:
+                color = "#fbbf24" # Yellow
+                text = f"Getting Closer... {best_conf}%"
+            else:
+                color = "#f87171" # Red
+                text = f"Searching... ({best_conf}%)"
+
+            self.conf_meter.setText(text)
+            self.conf_meter.setStyleSheet(f"background: #0f172a; color: {color}; font-size: 16px; font-weight: 900; border-radius: 8px; border: 2px solid {color};")
+
+            # --- UPDATE WORD UI ---
+            if best_word != "..." and best_conf > 60:
+                self.result_label.setText(best_word.upper())
+                self.result_label.setStyleSheet(f"font-size: 90px; color: {color}; font-weight: 900;")
+            elif best_conf < 30:
+                self.result_label.setText("SEARCHING...")
+                self.result_label.setStyleSheet("font-size: 80px; color: #475569; font-weight: 900;")
+
         else:
-            # RESET when hands leave the camera entirely
             self.engine.reset_hand("left")
             self.engine.reset_hand("right")
             self.conf_meter.setText("Match Confidence: 0%")
             self.conf_meter.setStyleSheet("background: #1e293b; color: #94a3b8; border-radius: 8px; border: 2px solid #334155;")
             self.result_label.setText("READY")
             self.result_label.setStyleSheet("font-size: 80px; color: #f8fafc; font-weight: 900;")
+
+        if "left" not in current_visible_sides: self.engine.reset_hand("left")
+        if "right" not in current_visible_sides: self.engine.reset_hand("right")
 
         h, w, ch = frame.shape
         qimg = QImage(frame.data, w, h, ch * w, QImage.Format.Format_BGR888)
