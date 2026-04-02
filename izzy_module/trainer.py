@@ -22,7 +22,7 @@ class TrainerWidget(QWidget):
 
         # --- CONFIG ---
         self.RECORD_DURATION = 2.5
-        self.ALPHA = 0.3 # Smoothing alpha
+        self.ALPHA = 0.3 
 
         # --- STATE ---
         self.history = {"left": None, "right": None}
@@ -32,13 +32,11 @@ class TrainerWidget(QWidget):
         self.start_time = None
 
         # --- MEDIAPIPE ---
-        # 1. Hands
         self.mp_hands = mp.solutions.hands
         self.hands = self.mp_hands.Hands(
             model_complexity=1, max_num_hands=2,
             min_detection_confidence=0.8, min_tracking_confidence=0.8
         )
-        # 2. Face (For Nose Anchor)
         self.face_detector = mp.solutions.face_detection.FaceDetection(
             model_selection=0, min_detection_confidence=0.5
         )
@@ -63,6 +61,23 @@ class TrainerWidget(QWidget):
         layout = QVBoxLayout(self)
         layout.setSpacing(15)
         
+        # --- USER IDENTIFICATION (Normalized Input) ---
+        user_panel = QFrame()
+        user_panel.setStyleSheet("background: #1e293b; border-radius: 10px; border: 1px solid #334155;")
+        user_layout = QHBoxLayout(user_panel)
+        
+        user_label = QLabel("👤 CURRENT USER:")
+        user_label.setStyleSheet("color: #38bdf8; font-weight: bold;")
+        self.user_input = QLineEdit()
+        self.user_input.setPlaceholderText("Enter Name (e.g., Izzy or Jace)")
+        self.user_input.setText("Default")
+        self.user_input.setStyleSheet("padding: 8px; background: #0f172a; color: white; border: 1px solid #38bdf8; border-radius: 4px;")
+        
+        user_layout.addWidget(user_label)
+        user_layout.addWidget(self.user_input)
+        layout.addWidget(user_panel)
+
+        # --- GESTURE CONFIG ---
         config_panel = QFrame()
         config_panel.setStyleSheet("background: #f1f5f9; border-radius: 12px; border: 1px solid #cbd5e1;")
         config_layout = QVBoxLayout(config_panel)
@@ -155,11 +170,15 @@ class TrainerWidget(QWidget):
         if not self.name_input.text().strip():
             QMessageBox.warning(self, "Error", "Please name the gesture.")
             return
+        if not self.user_input.text().strip():
+            QMessageBox.warning(self, "Error", "Please identify the user.")
+            return
         self.sequence = []
         self.recording = True
         self.start_time = time.time()
         self.control_widget.hide()
         self.name_input.setEnabled(False)
+        self.user_input.setEnabled(False)
 
     def _update_frame(self):
         ret, frame = self.cap.read()
@@ -167,23 +186,19 @@ class TrainerWidget(QWidget):
         frame = cv2.flip(frame, 1)
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-        # 1. Detect Face for Nose Anchor
-        face_results = self.face_detector.process(rgb)
+        face_res = self.face_detector.process(rgb)
         nose_lm = None
-        if face_results.detections:
+        if face_res.detections:
             nose_lm = mp.solutions.face_detection.get_key_point(
-                face_results.detections[0], mp.solutions.face_detection.FaceKeyPoint.NOSE_TIP
+                face_res.detections[0], mp.solutions.face_detection.FaceKeyPoint.NOSE_TIP
             )
 
-        # 2. Detect Hands
-        results = self.hands.process(rgb)
+        hand_res = self.hands.process(rgb)
         curr_hands = {"left": None, "right": None}
 
-        if results.multi_hand_landmarks:
-            for i, lms in enumerate(results.multi_hand_landmarks):
-                side = results.multi_handedness[i].classification[0].label.lower()
-                
-                # --- SYNCED NORMALIZATION: Hand Shape + Nose Spatial ---
+        if hand_res.multi_hand_landmarks:
+            for i, lms in enumerate(hand_res.multi_hand_landmarks):
+                side = hand_res.multi_handedness[i].classification[0].label.lower()
                 curr_hands[side] = self._get_complex_norm(lms, nose_lm, side)
                 self.mp_draw.draw_landmarks(frame, lms, self.mp_hands.HAND_CONNECTIONS)
 
@@ -193,13 +208,11 @@ class TrainerWidget(QWidget):
             cv2.rectangle(frame, (0,0), (bar_w, 20), (59, 130, 246), -1)
 
             if not self.mode_btn.isChecked():
-                # DUAL MODE: 66 features per hand
                 self.sequence.append({
                     "left": curr_hands["left"] if curr_hands["left"] is not None else np.zeros(66),
                     "right": curr_hands["right"] if curr_hands["right"] is not None else np.zeros(66)
                 })
             else:
-                # SINGLE MODE: 66 features
                 target = "left" if "LEFT" in self.side_btn.text() else "right"
                 self.sequence.append(curr_hands[target] if curr_hands[target] is not None else np.zeros(66))
 
@@ -213,40 +226,28 @@ class TrainerWidget(QWidget):
         self.feed.setPixmap(QPixmap.fromImage(qimg).scaled(self.feed.size(), Qt.AspectRatioMode.KeepAspectRatio))
 
     def _get_complex_norm(self, hand_lms, nose_lm, side):
-        # 1. Hand Shape (63 features)
         pts = np.array([[lm.x, lm.y, lm.z] for lm in hand_lms.landmark])
         wrist = pts[0]
         hand_shape = ((pts - wrist) * 10).flatten() 
-        
-        # 2. Global Position (3 features)
-        if nose_lm:
-            # FIXED: Default Z to 0 to match Predictor and prevent AttributeError
-            spatial_pos = np.array([
-                wrist[0] - nose_lm.x,
-                wrist[1] - nose_lm.y,
-                0
-            ]) * 10 
-        else:
-            spatial_pos = np.zeros(3)
-
-        # 3. Combine to 66 features
+        spatial_pos = np.array([wrist[0] - nose_lm.x, wrist[1] - nose_lm.y, 0]) * 10 if nose_lm else np.zeros(3)
         combined = np.concatenate([hand_shape, spatial_pos])
 
-        # Apply smoothing
         if self.history[side] is None:
             self.history[side] = combined
         else:
             self.history[side] = (self.ALPHA * combined) + ((1 - self.ALPHA) * self.history[side])
-        
         return self.history[side]
 
     def _save_data(self):
-        name = self.name_input.text().strip().lower()
-        is_single = self.mode_btn.isChecked()
+        # --- NORMALIZATION ---
+        user = self.user_input.text().strip().lower().replace(" ", "_")
+        name = self.name_input.text().strip().lower().replace(" ", "_")
         
         lib = np.load(self.lib_path, allow_pickle=True).item() if os.path.exists(self.lib_path) else {}
         
-        prefix = f"{name}_dual_" if not is_single else f"{name}_{'left' if 'LEFT' in self.side_btn.text() else 'right'}_"
+        side_tag = "dual" if not self.mode_btn.isChecked() else ("left" if "LEFT" in self.side_btn.text() else "right")
+        prefix = f"{user}_{name}_{side_tag}_"
+        
         existing = [int(k.split("_")[-1]) for k in lib if k.startswith(prefix)]
         idx = max(existing) + 1 if existing else 1
         label = f"{prefix}{idx}"
@@ -254,7 +255,7 @@ class TrainerWidget(QWidget):
         lib[label] = np.array(self.sequence, dtype=object)
         np.save(self.lib_path, lib)
         
-        self.history_label.setText(f"✅ Saved: {label}")
+        self.history_label.setText(f"✅ Saved for '{user}': {label}")
         self._reset_ui()
 
     def _discard_data(self):
@@ -264,6 +265,7 @@ class TrainerWidget(QWidget):
         self.decision_widget.hide()
         self.control_widget.show()
         self.name_input.setEnabled(True)
+        self.user_input.setEnabled(True)
         self._toggle_camera()
 
     def hideEvent(self, event):

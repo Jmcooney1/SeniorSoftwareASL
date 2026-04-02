@@ -3,7 +3,7 @@ import cv2
 import json
 import numpy as np
 import mediapipe as mp
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QPushButton
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit, QFrame
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QImage, QPixmap
 
@@ -21,13 +21,11 @@ class PredictorWidget(QWidget):
         self.cap = None
         
         # --- MEDIAPIPE SOLUTIONS ---
-        # 1. Hand Tracking
         self.mp_hands = mp.solutions.hands
         self.hands = self.mp_hands.Hands(
             min_detection_confidence=0.7, 
             min_tracking_confidence=0.7
         )
-        # 2. Face Detection (For the Nose Anchor)
         self.face_detector = mp.solutions.face_detection.FaceDetection(
             model_selection=0, 
             min_detection_confidence=0.5
@@ -53,6 +51,26 @@ class PredictorWidget(QWidget):
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
         
+        # --- NEW: USER IDENTIFICATION PANEL ---
+        # This matches the Trainer so the engine knows who is signing
+        user_panel = QFrame()
+        user_panel.setStyleSheet("background: #1e293b; border-radius: 10px; border: 1px solid #334155;")
+        user_layout = QHBoxLayout(user_panel)
+        
+        user_label = QLabel("👤 IDENTIFY USER:")
+        user_label.setStyleSheet("color: #38bdf8; font-weight: bold;")
+        
+        self.user_input = QLineEdit()
+        self.user_input.setPlaceholderText("Enter Name (e.g., Izzy)")
+        self.user_input.setText("Default")
+        self.user_input.setStyleSheet("padding: 8px; background: #0f172a; color: white; border: 1px solid #38bdf8; border-radius: 4px;")
+        # When text changes, tell the engine who the user is
+        self.user_input.textChanged.connect(self._update_engine_user)
+        
+        user_layout.addWidget(user_label)
+        user_layout.addWidget(self.user_input)
+        layout.addWidget(user_panel)
+
         self.status = QLabel(f"Status: {len(self.engine.library)} Signs Loaded")
         self.status.setStyleSheet("color: #38bdf8; font-weight: bold; background: #0f172a; padding: 10px; border-radius: 5px;")
         layout.addWidget(self.status)
@@ -78,10 +96,17 @@ class PredictorWidget(QWidget):
         self.btn.setStyleSheet("padding: 20px; background: #2563eb; color: white; font-weight: bold; border-radius: 10px;")
         layout.addWidget(self.btn)
 
+    def _update_engine_user(self):
+        """Update the engine's current user whenever the text box changes."""
+        new_user = self.user_input.text()
+        self.engine.current_user = new_user
+
     def showEvent(self, event):
         if hasattr(self, 'engine'):
             self.engine.library = self.engine.load_library(self.lib_path)
             self.status.setText(f"Status: {len(self.engine.library)} Signs Loaded")
+            # Sync user on show
+            self._update_engine_user()
         super().showEvent(event)
 
     def _toggle_cam(self):
@@ -110,19 +135,15 @@ class PredictorWidget(QWidget):
         frame = cv2.flip(frame, 1)
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         
-        # --- 1. DETECT FACE (For Nose Anchor) ---
         face_results = self.face_detector.process(rgb)
         nose_point = None
         if face_results.detections:
-            # MediaPipe Face Detection keypoint 0 is typically the Nose Tip
             nose_point = mp.solutions.face_detection.get_key_point(
                 face_results.detections[0], 
                 mp.solutions.face_detection.FaceKeyPoint.NOSE_TIP
             )
 
-        # --- 2. DETECT HANDS ---
         results = self.hands.process(rgb)
-
         best_word = "..."
         best_conf = 0
         current_visible_sides = []
@@ -132,7 +153,7 @@ class PredictorWidget(QWidget):
                 side = results.multi_handedness[i].classification[0].label
                 current_visible_sides.append(side.lower())
                 
-                # --- UPDATED: Pass nose_point to engine ---
+                # Use current nose_point
                 word, conf = self.engine.process_frame(lms, side, nose_point)
                 
                 if conf > best_conf:
@@ -141,25 +162,24 @@ class PredictorWidget(QWidget):
                 
                 self.mp_draw.draw_landmarks(frame, lms, self.mp_hands.HAND_CONNECTIONS)
 
-            # --- UPDATE CONFIDENCE UI ---
+            # --- UI UPDATES ---
             if best_conf >= 95:
-                color = "#22d3ee" # Cyan
+                color = "#22d3ee"
                 text = f"🌟 PERFECT: {best_conf}%"
             elif best_conf >= 80:
-                color = "#4ade80" # Green
+                color = "#4ade80"
                 text = f"Match Confidence: {best_conf}%"
             elif best_conf >= 60:
-                color = "#fbbf24" # Yellow
+                color = "#fbbf24"
                 text = f"Getting Closer... {best_conf}%"
             else:
-                color = "#f87171" # Red
+                color = "#f87171"
                 text = f"Searching... ({best_conf}%)"
 
             self.conf_meter.setText(text)
             self.conf_meter.setStyleSheet(f"background: #0f172a; color: {color}; font-size: 16px; font-weight: 900; border-radius: 8px; border: 2px solid {color};")
 
-            # --- UPDATE WORD UI ---
-            if best_word != "..." and best_conf > 60:
+            if best_word != "..." and best_conf > 55: # Matches engine trigger
                 self.result_label.setText(best_word.upper())
                 self.result_label.setStyleSheet(f"font-size: 90px; color: {color}; font-weight: 900;")
             elif best_conf < 30:
