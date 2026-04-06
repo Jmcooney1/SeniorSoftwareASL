@@ -1,173 +1,116 @@
+from __future__ import annotations
+
+import math
+
 from direct.showbase.DirectObject import DirectObject
-from panda3d.core import ClockObject, Quat, Vec3, WindowProperties
+from panda3d.core import ClockObject, LPoint3f
 
 
-class FlyCameraController(DirectObject):
+class CameraController(DirectObject):
     def __init__(
         self,
         base,
         camera,
-        move_speed: float = 10.0,
-        look_sensitivity_degrees: float = 0.1,
+        orbit_center: LPoint3f | tuple[float, float, float] = (0.0, 0.0, 0.0),
+        distance: float = 5.2,
+        camera_height: float = 1.82,
+        initial_azimuth_degrees: float = 0.0,
+        orbit_speed_degrees: float = 90.0,
+        zoom_speed: float = 3.0,
+        min_distance: float = 2.4,
+        max_distance: float = 8.5,
     ) -> None:
         super().__init__()
         self.base = base
         self.camera = camera
-        self.move_speed = move_speed
-        self.look_sensitivity_degrees = look_sensitivity_degrees
-
-        initial_hpr = self.camera.getHpr(self.base.render)
-        self.yaw_degrees = initial_hpr.x
-        self.pitch_degrees = initial_hpr.y
-        self.last_pointer = None
-        self.suppress_next_mouse_delta = False
+        self.orbit_center = self._coerce_point(orbit_center)
+        self.distance = distance
+        self.camera_height = camera_height
+        self.azimuth_degrees = initial_azimuth_degrees
+        self.orbit_speed_degrees = orbit_speed_degrees
+        self.zoom_speed = zoom_speed
+        self.min_distance = min_distance
+        self.max_distance = max_distance
 
         self.key_map = {
-            "forward": False,
-            "backward": False,
-            "left": False,
-            "right": False,
-            "up": False,
-            "down": False,
+            "orbit_left": False,
+            "orbit_right": False,
+            "zoom_in": False,
+            "zoom_out": False,
         }
 
-        self.accept("w", self._set_key, ["forward", True])
-        self.accept("w-up", self._set_key, ["forward", False])
-        self.accept("s", self._set_key, ["backward", True])
-        self.accept("s-up", self._set_key, ["backward", False])
-        self.accept("a", self._set_key, ["left", True])
-        self.accept("a-up", self._set_key, ["left", False])
-        self.accept("d", self._set_key, ["right", True])
-        self.accept("d-up", self._set_key, ["right", False])
-        self.accept("space", self._set_key, ["up", True])
-        self.accept("space-up", self._set_key, ["up", False])
-        self.accept("control", self._set_key, ["down", True])
-        self.accept("control-up", self._set_key, ["down", False])
-        self.accept("lcontrol", self._set_key, ["down", True])
-        self.accept("lcontrol-up", self._set_key, ["down", False])
-        self.accept("rcontrol", self._set_key, ["down", True])
-        self.accept("rcontrol-up", self._set_key, ["down", False])
+        self._bind_key("a", "orbit_left")
+        self._bind_key("arrow_left", "orbit_left")
+        self._bind_key("d", "orbit_right")
+        self._bind_key("arrow_right", "orbit_right")
+        self._bind_key("w", "zoom_in")
+        self._bind_key("arrow_up", "zoom_in")
+        self._bind_key("s", "zoom_out")
+        self._bind_key("arrow_down", "zoom_out")
 
-        self._capture_mouse()
-        self._apply_orientation()
-        self.base.taskMgr.add(self._update, "fly-camera-controller")
+        self._apply_camera_transform()
+        self.base.taskMgr.add(self._update, "orbit-camera-controller")
 
     def destroy(self) -> None:
-        self._release_mouse()
         self.ignoreAll()
-        self.base.taskMgr.remove("fly-camera-controller")
+        self.base.taskMgr.remove("orbit-camera-controller")
+
+    def set_camera_height(self, height: float) -> None:
+        self.camera_height = height
+        self._apply_camera_transform()
+
+    def set_distance(self, distance: float) -> None:
+        self.distance = self._clamp_distance(distance)
+        self._apply_camera_transform()
+
+    def set_orbit_center(self, orbit_center: LPoint3f | tuple[float, float, float]) -> None:
+        self.orbit_center = self._coerce_point(orbit_center)
+        self._apply_camera_transform()
+
+    def _bind_key(self, key: str, action: str) -> None:
+        self.accept(key, self._set_key, [action, True])
+        self.accept(f"{key}-up", self._set_key, [action, False])
 
     def _set_key(self, key: str, is_down: bool) -> None:
         self.key_map[key] = is_down
 
-    def _capture_mouse(self) -> None:
-        if not hasattr(self.base.win, "requestProperties"):
-            return
-        props = WindowProperties()
-        props.setCursorHidden(True)
-        if hasattr(props, "setMouseMode"):
-            props.setMouseMode(WindowProperties.M_confined)
-        self.base.win.requestProperties(props)
-        self._center_pointer()
-
-    def _release_mouse(self) -> None:
-        if not hasattr(self.base.win, "requestProperties"):
-            return
-        props = WindowProperties()
-        props.setCursorHidden(False)
-        if hasattr(props, "setMouseMode"):
-            props.setMouseMode(WindowProperties.M_absolute)
-        self.base.win.requestProperties(props)
-        self.last_pointer = None
-        self.suppress_next_mouse_delta = False
-
     def _update(self, task):
         dt = ClockObject.getGlobalClock().getDt()
-        self._rotate_camera_from_mouse()
-        self._move_camera(dt)
+        did_move = False
+
+        if self.key_map["orbit_left"]:
+            self.azimuth_degrees -= self.orbit_speed_degrees * dt
+            did_move = True
+        if self.key_map["orbit_right"]:
+            self.azimuth_degrees += self.orbit_speed_degrees * dt
+            did_move = True
+        if self.key_map["zoom_in"]:
+            self.distance = self._clamp_distance(self.distance - (self.zoom_speed * dt))
+            did_move = True
+        if self.key_map["zoom_out"]:
+            self.distance = self._clamp_distance(self.distance + (self.zoom_speed * dt))
+            did_move = True
+
+        if did_move:
+            self._apply_camera_transform()
+
         return task.cont
 
-    def _center_pointer(self) -> None:
-        if not hasattr(self.base.win, "movePointer"):
-            return
-        center_x = self.base.win.getXSize() // 2
-        center_y = self.base.win.getYSize() // 2
-        self.base.win.movePointer(0, center_x, center_y)
-        self.last_pointer = (center_x, center_y)
-        self.suppress_next_mouse_delta = True
+    def _apply_camera_transform(self) -> None:
+        azimuth_radians = math.radians(self.azimuth_degrees)
+        camera_x = self.orbit_center.x + (math.sin(azimuth_radians) * self.distance)
+        camera_y = self.orbit_center.y - (math.cos(azimuth_radians) * self.distance)
+        self.camera.setPos(camera_x, camera_y, self.camera_height)
+        self.camera.lookAt(self.orbit_center)
 
-    def _rotate_camera_from_mouse(self) -> None:
-        if not self.base.mouseWatcherNode.hasMouse() or not hasattr(self.base.win, "getPointer"):
-            self.last_pointer = None
-            return
+    def _clamp_distance(self, distance: float) -> float:
+        return max(self.min_distance, min(self.max_distance, distance))
 
-        pointer = self.base.win.getPointer(0)
-        pointer_xy = (pointer.getX(), pointer.getY())
+    @staticmethod
+    def _coerce_point(point: LPoint3f | tuple[float, float, float]) -> LPoint3f:
+        if isinstance(point, LPoint3f):
+            return LPoint3f(point)
+        return LPoint3f(*point)
 
-        if self.last_pointer is None:
-            self.last_pointer = pointer_xy
-            return
 
-        if self.suppress_next_mouse_delta:
-            self.last_pointer = pointer_xy
-            self.suppress_next_mouse_delta = False
-            return
-
-        delta_x = pointer_xy[0] - self.last_pointer[0]
-        delta_y = pointer_xy[1] - self.last_pointer[1]
-        self.last_pointer = pointer_xy
-
-        if abs(delta_x) > 200 or abs(delta_y) > 200:
-            return
-
-        if delta_x == 0 and delta_y == 0:
-            return
-
-        self.yaw_degrees -= delta_x * self.look_sensitivity_degrees
-        self.pitch_degrees = max(
-            -89.5,
-            min(89.5, self.pitch_degrees - (delta_y * self.look_sensitivity_degrees)),
-        )
-        self._apply_orientation()
-
-        if self._pointer_near_window_edge(pointer_xy):
-            self._center_pointer()
-
-    def _pointer_near_window_edge(self, pointer_xy) -> bool:
-        margin = 32
-        x_size = self.base.win.getXSize()
-        y_size = self.base.win.getYSize()
-        x, y = pointer_xy
-        return x <= margin or x >= (x_size - margin) or y <= margin or y >= (y_size - margin)
-
-    def _move_camera(self, dt: float) -> None:
-        camera_quat = self.camera.getQuat(self.base.render)
-        forward = camera_quat.xform(Vec3(0, 1, 0))
-        right = camera_quat.xform(Vec3(1, 0, 0))
-        up = Vec3(0, 0, 1)
-
-        velocity = Vec3(0, 0, 0)
-        if self.key_map["forward"]:
-            velocity += forward
-        if self.key_map["backward"]:
-            velocity -= forward
-        if self.key_map["left"]:
-            velocity -= right
-        if self.key_map["right"]:
-            velocity += right
-        if self.key_map["up"]:
-            velocity += up
-        if self.key_map["down"]:
-            velocity -= up
-
-        if velocity.length_squared() == 0:
-            return
-
-        velocity.normalize()
-        self.camera.setPos(self.camera.getPos() + (velocity * self.move_speed * dt))
-
-    def _apply_orientation(self) -> None:
-        orientation = Quat()
-        orientation.setHpr((self.yaw_degrees, self.pitch_degrees, 0.0))
-        orientation.normalize()
-        self.camera.setQuat(self.base.render, orientation)
+OrbitCameraController = CameraController

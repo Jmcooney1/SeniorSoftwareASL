@@ -6,8 +6,9 @@ mp_env/
 .env/
 myenv/
 
-# Dataset (too large for git)
+# Datasets
 dataSet/kily-dataset/*
+dataSet/david-dataset/*
 
 # Build output (setup.sh rebuilds these)
 dist/

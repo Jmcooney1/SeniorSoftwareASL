@@ -1,9 +1,12 @@
-import math
-import os
-
-from camera_controller import FlyCameraController
-from landmark_animation import LandmarkRigAnimator
-from panda_shared import load_actor, setup_lighting, frame_camera, get_anim_dir
+from panda_core import (
+    create_animator,
+    create_camera_controller,
+    create_character_pose_controller,
+    create_sign_hud,
+    frame_camera,
+    load_actor,
+    setup_lighting,
+)
 
 try:
     from QPanda3D.Panda3DWorld import Panda3DWorld
@@ -24,7 +27,7 @@ class QPandaPandaWorld:
             raise RuntimeError("QPanda3D is not installed")
         return super().__new__(cls)
 
-    def __init__(self, width: int = 1024, height: int = 768):
+    def __init__(self, width: int = 1024, height: int = 1024):
         # Dynamically create a subclass so static type checkers don't fail
         class _Impl(Panda3DWorld):
             pass
@@ -35,6 +38,7 @@ class QPandaPandaWorld:
         # Build the scene using the shared helpers so settings live in one place
         self.character = load_actor(self._world)
         setup_lighting(self._world)
+        self.scene_camera = getattr(self._world, "camera", None) or getattr(self._world, "cam", None)
 
         try:
             if getattr(self._world, "camLens", None) is not None:
@@ -43,18 +47,23 @@ class QPandaPandaWorld:
             pass
 
         try:
-            self.camera_controller = FlyCameraController(self._world, self._world.cam)
+            self.camera_controller = create_camera_controller(self._world, self.scene_camera) if self.scene_camera else None
         except Exception:
             self.camera_controller = None
 
-        anim_dir = get_anim_dir()
-        if not os.path.isdir(anim_dir):
-            raise FileNotFoundError(f"Animation folder not found: {anim_dir}")
-
-        self.landmark_animator = LandmarkRigAnimator(self.character, anim_dir=anim_dir)
+        self.landmark_animator = create_animator(self.character)
+        self.sign_hud = create_sign_hud(self._world, self.landmark_animator)
         self._world.taskMgr.add(self.landmark_animator.update, "landmark-rig-animator")
+        try:
+            self.character_pose_controller = create_character_pose_controller(
+                self._world,
+                self.character,
+                camera=self.scene_camera,
+            )
+        except Exception:
+            self.character_pose_controller = None
 
     # Proxy attributes/methods commonly used by QPanda3D widget
     def __getattr__(self, item):
         return getattr(self._world, item)
-    # Lighting and camera framing are provided by panda_shared to avoid duplication
+    # Lighting and camera framing are provided by panda_core to avoid duplication
