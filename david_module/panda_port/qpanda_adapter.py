@@ -27,7 +27,7 @@ class QPandaPandaWorld:
             raise RuntimeError("QPanda3D is not installed")
         return super().__new__(cls)
 
-    def __init__(self, width: int = 1024, height: int = 1024):
+    def __init__(self, width: int = 1920, height: int = 1080):
         # Dynamically create a subclass so static type checkers don't fail
         class _Impl(Panda3DWorld):
             pass

@@ -10,6 +10,7 @@ from panda_core import (
     load_actor,
     setup_lighting,
 )
+from landmark_debug import LandmarkVisualizer
 
 
 class PandaApp(ShowBase):
@@ -40,6 +41,15 @@ class PandaApp(ShowBase):
         self.landmark_animator = create_animator(self.character)
         self.sign_hud = create_sign_hud(self, self.landmark_animator)
         self.taskMgr.add(self.landmark_animator.update, "landmark-rig-animator")
+
+        # Landmark debug overlay (toggle with V)
+        self.debug_viz = LandmarkVisualizer(
+            self, self.character,
+            camera_controller=self.camera_controller,
+            hand_world_space=getattr(self.landmark_animator, "hand_world_space", True),
+        )
+        self.taskMgr.add(self._update_debug_viz, "debug-viz-update")
+
         try:
             self.character_pose_controller = create_character_pose_controller(
                 self,
@@ -48,4 +58,11 @@ class PandaApp(ShowBase):
             )
         except Exception:
             self.character_pose_controller = None
+
+    def _update_debug_viz(self, task):
+        self.debug_viz.update(
+            self.landmark_animator.last_pose_lms,
+            self.landmark_animator.last_hand_lms,
+        )
+        return task.cont
     # Lighting, camera framing, and HUD setup are provided by panda_core to avoid duplication
