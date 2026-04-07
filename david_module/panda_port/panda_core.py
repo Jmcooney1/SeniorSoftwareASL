@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import math
-import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -24,14 +23,13 @@ PART_NAME = "modelRoot"
 BASE_DIR = Path(__file__).resolve().parent
 MODEL_PATH = BASE_DIR / "models" / "rain.bam.pz"
 
-# Legacy CSV anim folder inside `anim/` (used only when ANIMATION_BACKEND="legacy_csv").
-ANIM_SUBFOLDER = "act"
 
-# Shared animation backend selection for both Panda and QPanda.
-ANIMATION_BACKEND = "asllvd"
+# Dataset root
 ASLLVD_DATASET_ROOT = (BASE_DIR / ".." / ".." / "dataSet" / "david-dataset" / "ASLLVD-Skeleton").resolve()
-ASLLVD_GLOSS = "phone"
-ASLLVD_VARIANT = None
+
+# Active sign to animate
+ACTIVE_GLOSS = "car"
+ACTIVE_VARIANT: int | None = None
 
 # Default transform applied to the loaded character.
 MODEL_POS = LPoint3f(0, 0, -1)
@@ -42,7 +40,7 @@ CAMERA_HEIGHT = 0.42
 CAMERA_TARGET_X = 0.0
 CAMERA_TARGET_Y = 0.0
 CAMERA_TARGET_Z = 0.26
-CAMERA_DISTANCE = 0.92
+CAMERA_DISTANCE = 1.5
 CAMERA_MIN_DISTANCE = 0.78
 CAMERA_MAX_DISTANCE = 2.8
 CAMERA_INITIAL_AZIMUTH_DEGREES = 0.0
@@ -50,12 +48,12 @@ CAMERA_ORBIT_SPEED_DEGREES = 90.0
 CAMERA_ZOOM_SPEED = 3.0
 CAMERA_FOV_DEGREES = 50.0
 CAMERA_NEAR = 0.1
-CAMERA_FAR = 1000.0
+CAMERA_FAR = 100.0
 
 EYE_FOLLOW_TOGGLE_KEY = "f"
-EYES_FOLLOW_CAMERA_BY_DEFAULT = False
+EYES_FOLLOW_CAMERA_BY_DEFAULT = True
 DEFAULT_EYE_VERTICAL_ANGLE_DEGREES = 0.0
-MAX_EYE_TURN_DEGREES = 20.0
+MAX_EYE_TURN_DEGREES = 25.0
 EYE_JOINT_NAMES = {
     "L": "DEF-Eye.L",
     "R": "DEF-Eye.R",
@@ -334,11 +332,6 @@ def create_character_pose_controller(world, actor: Actor, camera=None):
     )
 
 
-def get_anim_dir(subfolder: str | None = None) -> str:
-    """Return the absolute path to the chosen legacy anim subfolder inside `anim/`."""
-    sub = subfolder if subfolder else ANIM_SUBFOLDER
-    return os.path.abspath(os.path.join(str(BASE_DIR), "anim", sub))
-
 
 def _sign_label_text(animator) -> str:
     gloss = getattr(animator, "selected_gloss", None)
@@ -384,93 +377,44 @@ def create_sign_hud(world, animator):
     )
 
 
-def _normalize_variant(variant: int | str | None) -> int | None:
-    if variant is None:
-        return None
-    if isinstance(variant, str):
-        cleaned = variant.strip()
-        if not cleaned:
-            return None
-        if not cleaned.isdigit():
-            raise ValueError(f"ASLLVD variant must be numeric, got {variant!r}")
-        value = int(cleaned)
-    else:
-        value = int(variant)
-    if value < 0:
-        raise ValueError(f"ASLLVD variant must be non-negative, got {value}")
-    return value
+def _resolve_clip(gloss: str, variant: int | None = None) -> Path:
+    """Find a PKL clip by gloss in the ASLLVD-Skeleton dataset."""
+    from unified_animation import resolve_asllvd_clip
 
+    if ASLLVD_DATASET_ROOT.exists():
+        clip = resolve_asllvd_clip(ASLLVD_DATASET_ROOT, gloss, variant)
+        if clip is not None:
+            return clip
 
-def resolve_asllvd_clip(
-    dataset_root: str | Path | None = None,
-    gloss: str | None = None,
-    variant: int | str | None = None,
-) -> Path:
-    dataset_root_path = Path(dataset_root) if dataset_root is not None else ASLLVD_DATASET_ROOT
-    if not dataset_root_path.exists():
-        raise FileNotFoundError(f"ASLLVD dataset root not found: {dataset_root_path}")
-
-    clip_root = dataset_root_path / "PKL_POSES"
-    if not clip_root.exists():
-        raise FileNotFoundError(f"ASLLVD PKL_POSES folder not found: {clip_root}")
-
-    normalized_gloss = (gloss if gloss is not None else ASLLVD_GLOSS).strip()
-    if not normalized_gloss:
-        raise ValueError("ASLLVD_GLOSS must be a non-empty exact dataset gloss")
-
-    normalized_variant = _normalize_variant(variant if variant is not None else ASLLVD_VARIANT)
-    if normalized_variant is not None:
-        clip_path = clip_root / f"{normalized_gloss}-{normalized_variant:03d}.pkl"
-        if not clip_path.exists():
-            raise FileNotFoundError(
-                f"ASLLVD clip not found for gloss {normalized_gloss!r} variant {normalized_variant:03d}: {clip_path}"
-            )
-        return clip_path
-
-    matches = sorted(clip_root.glob(f"{normalized_gloss}-*.pkl"))
-    if not matches:
-        raise FileNotFoundError(f"No ASLLVD clips found for gloss {normalized_gloss!r} under {clip_root}")
-    return matches[0]
+    raise FileNotFoundError(
+        f"No PKL clip found for gloss {gloss!r} in ASLLVD dataset"
+    )
 
 
 def get_animation_config() -> AnimationConfig:
-    if ANIMATION_BACKEND == "asllvd":
-        normalized_variant = _normalize_variant(ASLLVD_VARIANT)
-        clip_path = resolve_asllvd_clip(
-            dataset_root=ASLLVD_DATASET_ROOT,
-            gloss=ASLLVD_GLOSS,
-            variant=normalized_variant,
-        )
-        return AnimationConfig(
-            backend=ANIMATION_BACKEND,
-            dataset_root=ASLLVD_DATASET_ROOT,
-            gloss=ASLLVD_GLOSS,
-            variant=normalized_variant,
-            clip_path=clip_path,
-        )
-
-    if ANIMATION_BACKEND == "legacy_csv":
-        anim_dir = Path(get_anim_dir())
-        if not anim_dir.exists():
-            raise FileNotFoundError(f"Legacy animation folder not found: {anim_dir}")
-        return AnimationConfig(
-            backend=ANIMATION_BACKEND,
-            anim_dir=anim_dir,
-        )
-
-    raise ValueError(f"Unsupported animation backend: {ANIMATION_BACKEND}")
+    gloss = ACTIVE_GLOSS.strip()
+    if not gloss:
+        raise ValueError("ACTIVE_GLOSS must be a non-empty string")
+    clip_path = _resolve_clip(gloss, ACTIVE_VARIANT)
+    return AnimationConfig(
+        backend="unified",
+        dataset_root=clip_path.parent,
+        gloss=gloss,
+        variant=ACTIVE_VARIANT,
+        clip_path=clip_path,
+    )
 
 
 def create_animator(actor: Actor):
+    from unified_animation import UnifiedRigAnimator
+
     config = get_animation_config()
-    if config.backend == "asllvd":
-        from asllvd_animation import ASLLVDRigAnimator
+    return UnifiedRigAnimator(actor, config=config)
 
-        return ASLLVDRigAnimator(actor, config=config)
 
-    if config.backend == "legacy_csv":
-        from landmark_animation import LandmarkRigAnimator
+def create_csv_animator(actor: Actor, csv_path):
+    """Create a CSV-based animator for *csv_path*."""
+    from csv_animation import CSVRigAnimator
+    from pathlib import Path
 
-        return LandmarkRigAnimator(actor, anim_dir=config.anim_dir)
-
-    raise ValueError(f"Unsupported animation backend: {config.backend}")
+    return CSVRigAnimator(actor, csv_path=Path(csv_path))
