@@ -20,7 +20,7 @@ import math
 
 from direct.gui.OnscreenText import OnscreenText
 from direct.showbase.DirectObject import DirectObject
-from panda3d.core import LineSegs, NodePath, TextNode, Vec3, Vec4
+from panda3d.core import LineSegs, NodePath, Point2, Point3, TextNode, Vec3, Vec4
 
 from unified_animation import (
     TORSO_DEPTH_SIGN,
@@ -411,16 +411,77 @@ class LandmarkVisualizer(DirectObject):
 
         return rig_shoulder, rig_elbow, rig_wrist
 
-    def _anchor_hand_3d(self, hlms, rig_wrist, side):
-        """Scale and translate hand landmarks so wrist(0) sits at *rig_wrist*
-        and overall hand size matches the rig's hand size."""
+    def _anchor_hand_3d(self, hlms, rig_wrist, side, rig_pose):
+        """Scale, orient, and translate CSV hand landmarks so wrist(0)
+        sits at *rig_wrist*, the hand is rotated to match the pose
+        wrist-triangle orientation, and overall hand size is derived
+        from the pose wrist-triangle (bridging image→rig scale)."""
         w0 = hlms.get(0)
         if w0 is None:
             return {}
-        mid = hlms.get(9)
-        cap_hs = (mid - w0).length() if mid is not None else 0.15
-        rig_hs = self._rig_hand_size.get(side, 0.05)
-        s = rig_hs / max(cap_hs, 1e-4)
+
+        # Pose wrist-triangle landmarks (already in rig space)
+        wi, ii, pi = (15, 19, 17) if side == "L" else (16, 20, 18)
+        p_w = rig_pose.get(wi)
+        p_idx = rig_pose.get(ii)
+        p_pnk = rig_pose.get(pi)
+
+        # --- scale factor: pose triangle size vs hand-model size ---
+        # The pose sub-landmarks (19/20 = index tip, 17/18 = pinky tip)
+        # in rig_pose tell us "how big the hand should be" in rig space.
+        # Comparing to the hand model's corresponding fingertip distances
+        # gives the image→rig scale factor.
+        rig_dists: list[float] = []
+        if p_w is not None and p_idx is not None:
+            rig_dists.append((p_idx - p_w).length())
+        if p_w is not None and p_pnk is not None:
+            rig_dists.append((p_pnk - p_w).length())
+
+        img_dists: list[float] = []
+        h_itip = hlms.get(8)    # index fingertip
+        h_ptip = hlms.get(20)   # pinky fingertip
+        if h_itip is not None:
+            img_dists.append((h_itip - w0).length())
+        if h_ptip is not None:
+            img_dists.append((h_ptip - w0).length())
+
+        if rig_dists and img_dists:
+            rig_avg = sum(rig_dists) / len(rig_dists)
+            img_avg = sum(img_dists) / len(img_dists)
+            s = rig_avg / max(img_avg, 1e-6)
+        else:
+            # Fallback: rig hand bone size / capture hand span
+            mid = hlms.get(9)
+            cap_hs = (mid - w0).length() if mid is not None else 0.15
+            rig_hs = self._rig_hand_size.get(side, 0.05)
+            s = rig_hs / max(cap_hs, 1e-4)
+
+        # --- source basis from hand landmark palm plane ---
+        h_idx_mcp = hlms.get(5)    # index MCP
+        h_pnk_mcp = hlms.get(17)   # pinky MCP
+        src_basis = None
+        if h_idx_mcp is not None and h_pnk_mcp is not None:
+            h_primary = (h_idx_mcp + h_pnk_mcp) * 0.5 - w0  # wrist → knuckle centre
+            h_secondary = h_idx_mcp - h_pnk_mcp              # across palm
+            src_basis = _build_basis(h_primary, h_secondary)
+
+        # --- target basis from pose wrist triangle ---
+        tgt_basis = None
+        if p_w is not None and p_idx is not None and p_pnk is not None:
+            p_primary = (p_idx + p_pnk) * 0.5 - p_w  # wrist → finger centre
+            p_secondary = p_idx - p_pnk               # across palm
+            tgt_basis = _build_basis(p_primary, p_secondary)
+
+        # --- rotate, scale, translate ---
+        if src_basis is not None and tgt_basis is not None:
+            return {
+                i: rig_wrist + _basis_to_world(
+                    _world_to_basis(p - w0, src_basis), tgt_basis
+                ) * s
+                for i, p in hlms.items()
+            }
+
+        # Fallback: scale + translate only (no orientation data)
         return {i: rig_wrist + (p - w0) * s for i, p in hlms.items()}
 
     def _update_3d(self, pose_lms, hand_lms):
@@ -503,7 +564,7 @@ class LandmarkVisualizer(DirectObject):
                 )
             else:
                 # CSV: hand landmarks in image-normalised space
-                rig_hand = self._anchor_hand_3d(hlms, wrist_pos, side)
+                rig_hand = self._anchor_hand_3d(hlms, wrist_pos, side, rig_pose)
 
             _draw_bones(ls, rig_hand, HAND_CONNECTIONS, color, 1.5)
             _draw_markers_3d(ls, rig_hand, color, 3.5, 0.005)
@@ -571,12 +632,21 @@ class LandmarkVisualizer(DirectObject):
         target_shoulder_a2d = 0.30
         s = target_shoulder_a2d / max(cap_sd, 1e-6)
 
-        # Vertical offset: centre the torso on the model
-        # Model torso centre in aspect2d ≈ 0.0 (roughly screen-centre)
+        # Vertical offset: project the rig's torso centre onto aspect2d
+        # so the skeleton aligns with the model beneath it.
         oy = 0.0
+        try:
+            rig_tc = Point3((self._rig_sc + self._rig_hc) * 0.5)
+            cam = self.world.cam
+            rig_tc_cam = cam.getRelativePoint(self.actor, rig_tc)
+            proj = Point2()
+            if cam.node().getLens().project(rig_tc_cam, proj):
+                oy = proj.y
+        except Exception:
+            pass
 
         def _to2d(p: Vec3) -> Vec3:
-            return Vec3((p.x - cx) * s, 0, -(p.y - cy) * s + oy)
+            return Vec3((p.x - cx) * s, 0, (p.y - cy) * s + oy)
 
         ls_seg = LineSegs("lm-debug-2d")
 
@@ -607,7 +677,7 @@ class LandmarkVisualizer(DirectObject):
                 # Target hand screen-size: proportion of shoulder width
                 hs = (target_shoulder_a2d * 0.40 / max(cap_hs, 1e-4))
                 sh = {
-                    i: Vec3(sw.x + (p.x - w0.x) * hs, 0, sw.z - (p.y - w0.y) * hs)
+                    i: Vec3(sw.x + (p.x - w0.x) * hs, 0, sw.z + (p.y - w0.y) * hs)
                     for i, p in hlms.items()
                 }
 
