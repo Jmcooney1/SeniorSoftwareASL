@@ -3,23 +3,24 @@
 Toggle with **V**:  OFF → 3D (always-on-top) → 2D (flat overlay) → OFF
 
 3D mode
-    Landmarks and bones rendered on top of the character in rig world-space.
-    Bone lengths are matched to the model's actual rig proportions so
-    shoulder, elbow, and wrist landmarks line up with the character's joints.
-    Viewable from any angle.
+    Landmarks and bones rendered on top of the character in rig world-space
+    so you can orbit freely and inspect the skeleton from any angle.
+    Arm segment lengths are matched to the model's actual bone lengths
+    while preserving the capture data's joint directions.
 
 2D mode
     A flat MediaPipe-style skeleton drawn on ``aspect2d``.  The camera
-    locks to a front view.  The skeleton is scaled so its shoulder width
-    matches the model's on-screen shoulder width and is centred over the
-    character's torso.
+    locks to a front view and zooms out slightly so the overlay aligns
+    with the model beneath it.
 """
 
 from __future__ import annotations
 
+import math
+
 from direct.gui.OnscreenText import OnscreenText
 from direct.showbase.DirectObject import DirectObject
-from panda3d.core import LineSegs, LPoint2f, LPoint3f, NodePath, TextNode, Vec3, Vec4
+from panda3d.core import LineSegs, NodePath, TextNode, Vec3, Vec4
 
 from unified_animation import (
     TORSO_DEPTH_SIGN,
@@ -31,70 +32,73 @@ from unified_animation import (
 )
 
 # -----------------------------------------------------------------------
+# Feature switches — set to True to render face / leg landmarks
+# -----------------------------------------------------------------------
+
+RENDER_FACE = False
+RENDER_LEGS = False
+
+# -----------------------------------------------------------------------
 # Skeleton topology  (correct MediaPipe connections)
 # -----------------------------------------------------------------------
 
-# Toggles – set True to render face / leg landmarks and bones
-SHOW_FACE = False
-SHOW_LEGS = False
+# Indices of landmarks that belong to face or legs, used to filter markers.
+_FACE_INDICES = frozenset(range(0, 11))        # 0-10
+_LEG_INDICES = frozenset(range(25, 33))         # 25-32
 
-# Pose: face landmarks (0-10)
-_POSE_FACE_CONNECTIONS = [
+_POSE_CONNECTIONS_FACE = [
     (0, 1), (1, 2), (2, 3), (3, 7),
     (0, 4), (4, 5), (5, 6), (6, 8),
     (9, 10),
 ]
 
-# Pose: torso (always drawn)
-_POSE_TORSO_CONNECTIONS = [
+_POSE_CONNECTIONS_TORSO_ARMS = [
+    # Torso
     (11, 12), (11, 23), (12, 24), (23, 24),
-]
-
-# Pose: arms + wrist fingertip stubs (always drawn)
-_POSE_ARM_CONNECTIONS = [
     # Left arm
     (11, 13), (13, 15), (15, 17), (15, 19), (15, 21), (17, 19),
     # Right arm
     (12, 14), (14, 16), (16, 18), (16, 20), (16, 22), (18, 20),
 ]
 
-# Pose: legs (toggled by SHOW_LEGS)
-_POSE_LEG_CONNECTIONS = [
+_POSE_CONNECTIONS_LEGS = [
     (23, 25), (25, 27), (27, 29), (29, 31), (27, 31),
     (24, 26), (26, 28), (28, 30), (30, 32), (28, 32),
 ]
 
-# Assemble active pose connections
-POSE_CONNECTIONS: list[tuple[int, int]] = list(_POSE_TORSO_CONNECTIONS) + list(_POSE_ARM_CONNECTIONS)
-if SHOW_FACE:
-    POSE_CONNECTIONS += _POSE_FACE_CONNECTIONS
-if SHOW_LEGS:
-    POSE_CONNECTIONS += _POSE_LEG_CONNECTIONS
-
-# Landmark indices to draw (only torso/arm unless toggled)
-_POSE_TORSO_ARM_INDICES = {11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24}
-_POSE_FACE_INDICES = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
-_POSE_LEG_INDICES = {25, 26, 27, 28, 29, 30, 31, 32}
-
-POSE_VISIBLE_INDICES: set[int] = set(_POSE_TORSO_ARM_INDICES)
-if SHOW_FACE:
-    POSE_VISIBLE_INDICES |= _POSE_FACE_INDICES
-if SHOW_LEGS:
-    POSE_VISIBLE_INDICES |= _POSE_LEG_INDICES
-
-# Hand connections (correct MediaPipe topology)
 HAND_CONNECTIONS = [
-    # Thumb (wrist → CMC → MCP → IP → tip)
+    # Thumb
     (0, 1), (1, 2), (2, 3), (3, 4),
-    # Index finger (wrist → MCP → PIP → DIP → tip)
+    # Index
     (0, 5), (5, 6), (6, 7), (7, 8),
-    # Middle finger
+    # Middle
     (5, 9), (9, 10), (10, 11), (11, 12),
-    # Ring finger
+    # Ring
     (9, 13), (13, 14), (14, 15), (15, 16),
-    # Pinky finger
+    # Pinky
     (13, 17), (0, 17), (17, 18), (18, 19), (19, 20),
 ]
+
+
+def _active_pose_connections() -> list[tuple[int, int]]:
+    """Return the currently enabled pose connections (respects feature flags)."""
+    out = list(_POSE_CONNECTIONS_TORSO_ARMS)
+    if RENDER_FACE:
+        out.extend(_POSE_CONNECTIONS_FACE)
+    if RENDER_LEGS:
+        out.extend(_POSE_CONNECTIONS_LEGS)
+    return out
+
+
+def _active_pose_indices() -> frozenset[int]:
+    """Return the set of landmark indices to skip based on feature flags."""
+    skip: set[int] = set()
+    if not RENDER_FACE:
+        skip |= _FACE_INDICES
+    if not RENDER_LEGS:
+        skip |= _LEG_INDICES
+    return frozenset(skip)
+
 
 # -----------------------------------------------------------------------
 # Colours
@@ -185,33 +189,35 @@ class LandmarkVisualizer(DirectObject):
         ) or (Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1))
         self._rig_shoulder_dist = (self._rig_rs - self._rig_ls).length()
 
-        # Rig bone lengths (from rest-pose joint positions)
-        self._rig_bone_len: dict[str, float] = {}
+        # Rig bone lengths (rest pose: shoulder→elbow, elbow→wrist)
+        self._rig_bones: dict[str, dict[str, float]] = {}
         for side in ("L", "R"):
-            ua = self._jpos(f"FK-Upperarm.{side}")
-            fa = self._jpos(f"FK-Forearm.{side}")
-            hd = self._jpos(f"FK-Hand.{side}")
-            self._rig_bone_len[f"Upperarm.{side}"] = (fa - ua).length()
-            self._rig_bone_len[f"Forearm.{side}"] = (hd - fa).length()
+            sj = self._jpos(f"HNG-Upperarm_Parent.{side}")
+            ej = self._jpos(f"FK-Forearm.{side}")
+            wj = self._jpos(f"FK-Hand.{side}")
+            self._rig_bones[side] = {
+                "upper": (ej - sj).length(),
+                "lower": (wj - ej).length(),
+            }
 
-        # Rig hand size (wrist → middle-finger MCP)
+        # Rig hand size (wrist → middle-finger base)
         self._rig_hand_size: dict[str, float] = {}
         for side in ("L", "R"):
-            self._rig_hand_size[side] = self._hand_rig_size(side)
+            try:
+                wp = self._jpos(f"DEF-Hand.{side}")
+                mp = self._jpos(f"DEF-Middle1.{side}")
+                self._rig_hand_size[side] = (mp - wp).length()
+            except Exception:
+                self._rig_hand_size[side] = 0.05
 
         # ---- camera save-state for 2D lock ----
         self._saved_cam_pos: Vec3 | None = None
         self._saved_cam_hpr: Vec3 | None = None
         self._cam_task_paused: bool = False
 
-        # ---- 2D screen-space anchors (set when entering 2D mode) ----
-        self._2d_screen_sc: Vec3 | None = None
-        self._2d_screen_shoulder_w: float = 0.0
-
-        # ---- HUD labels ----
+        # ---- HUD label (always visible) ----
         self._mode_text: OnscreenText | None = None
-        self._controls_text: OnscreenText | None = None
-        self._show_controls_hud()
+        self._refresh_label()
 
         # ---- key binding ----
         self.accept(TOGGLE_KEY, self.toggle_mode)
@@ -220,20 +226,6 @@ class LandmarkVisualizer(DirectObject):
 
     def _jpos(self, name: str) -> Vec3:
         return _v(self.actor.exposeJoint(None, PART_NAME, name).getPos(self.actor))
-
-    def _hand_rig_size(self, side: str) -> float:
-        try:
-            w = self._jpos(f"DEF-Hand.{side}")
-            m = self._jpos(f"DEF-Middle1.{side}")
-            return (m - w).length()
-        except Exception:
-            return 0.05
-
-    def _remap_dir(self, d: Vec3, cap_torso: tuple[Vec3, Vec3, Vec3]) -> Vec3:
-        """Transform a direction from capture basis to rig basis."""
-        local = _world_to_basis(d, cap_torso)
-        local = Vec3(local.x, local.y, local.z * TORSO_DEPTH_SIGN)
-        return _basis_to_world(local, self._rig_torso)
 
     # ----- mode cycling ----------------------------------------------
 
@@ -257,45 +249,27 @@ class LandmarkVisualizer(DirectObject):
             self._2d_root.show()
             self._enter_2d_camera()
 
-        self._refresh_mode_label()
+        self._refresh_label()
 
-    # ----- HUD -------------------------------------------------------
+    # ----- HUD label (always visible) --------------------------------
 
-    def _show_controls_hud(self) -> None:
-        """Always-visible controls hint (bottom-left)."""
-        a2d = getattr(self.world, "aspect2d", None)
-        if a2d is None:
-            return
-        try:
-            aspect = float(self.world.getAspectRatio())
-        except Exception:
-            aspect = 1.0
-        self._controls_text = OnscreenText(
-            text="[V] Skeleton debug  |  [F] Eye tracking",
-            parent=a2d,
-            pos=(-aspect + 0.12, -0.95),
-            scale=0.038,
-            align=TextNode.ALeft,
-            fg=(0.7, 0.7, 0.7, 0.8),
-            bg=(0.06, 0.07, 0.09, 0.55),
-            mayChange=False,
-        )
-
-    def _refresh_mode_label(self) -> None:
+    def _refresh_label(self) -> None:
         if self._mode_text is not None:
             self._mode_text.destroy()
             self._mode_text = None
-        if self.mode == MODE_OFF:
-            return
         try:
             aspect = float(self.world.getAspectRatio())
         except Exception:
             aspect = 1.0
+        lines = [
+            f"Skeleton: {_MODE_LABELS[self.mode]}  [V] cycle",
+            "[F] toggle eye-tracking",
+        ]
         self._mode_text = OnscreenText(
-            text=f"Debug: {_MODE_LABELS[self.mode]}  [V] toggle",
+            text="\n".join(lines),
             parent=getattr(self.world, "aspect2d", None) or self._2d_root,
-            pos=(aspect - 0.12, 0.92),
-            scale=0.042,
+            pos=(aspect - 0.08, 0.92),
+            scale=0.038,
             align=TextNode.ARight,
             fg=(1.0, 1.0, 0.3, 0.9),
             bg=(0.08, 0.1, 0.14, 0.65),
@@ -303,35 +277,6 @@ class LandmarkVisualizer(DirectObject):
         )
 
     # ----- 2D camera lock / unlock -----------------------------------
-
-    def _project_to_screen(self, actor_local_pos: Vec3) -> Vec3 | None:
-        """Project an actor-local point to aspect2d coordinates."""
-        cam = getattr(self.world, "camera", None) or getattr(self.world, "cam", None)
-        lens = getattr(self.world, "camLens", None)
-        render = getattr(self.world, "render", None)
-        if cam is None or lens is None or render is None:
-            return None
-        world_pos = render.getRelativePoint(self.actor, LPoint3f(*actor_local_pos))
-        cam_pos = cam.getRelativePoint(render, world_pos)
-        p2d = LPoint2f()
-        if not lens.project(LPoint3f(*cam_pos), p2d):
-            return None
-        try:
-            aspect = float(self.world.getAspectRatio())
-        except Exception:
-            aspect = 1.0
-        return Vec3(p2d.x * aspect, 0, p2d.y)
-
-    def _cache_2d_anchors(self) -> None:
-        """Project rig shoulders to screen space and cache for 2D overlay."""
-        ls_s = self._project_to_screen(self._rig_ls)
-        rs_s = self._project_to_screen(self._rig_rs)
-        if ls_s is not None and rs_s is not None:
-            self._2d_screen_sc = (ls_s + rs_s) * 0.5
-            self._2d_screen_shoulder_w = abs(rs_s.x - ls_s.x)
-        else:
-            self._2d_screen_sc = None
-            self._2d_screen_shoulder_w = 0.0
 
     def _enter_2d_camera(self) -> None:
         cam = getattr(self.world, "camera", None) or getattr(self.world, "cam", None)
@@ -357,9 +302,6 @@ class LandmarkVisualizer(DirectObject):
         )
         cam.setPos(CAMERA_TARGET_X, CAMERA_TARGET_Y - 2.2, CAMERA_TARGET_Z)
         cam.lookAt(camera_target_point())
-
-        # Cache screen-space anchors for the 2D overlay
-        self._cache_2d_anchors()
 
     def _exit_2d_camera(self) -> None:
         cam = getattr(self.world, "camera", None) or getattr(self.world, "cam", None)
@@ -402,119 +344,193 @@ class LandmarkVisualizer(DirectObject):
             node.removeNode()
         setattr(self, attr, None)
 
-    def _build_capture_torso(self, pose_lms):
-        """Return capture torso basis or None."""
+    def _capture_torso_basis(self, pose_lms):
+        """Return (cap_sc, cap_torso_basis, cap_shoulder_dist) or None."""
         ls = pose_lms.get(11)
         rs = pose_lms.get(12)
-        if ls is None or rs is None:
-            return None
         lh = pose_lms.get(23)
         rh = pose_lms.get(24)
+        if ls is None or rs is None:
+            return None
+        cap_sc = (ls + rs) * 0.5
+        # Use hips if available, otherwise fall back to a default down vector
         if lh is not None and rh is not None:
             cap_hc = (lh + rh) * 0.5
-            cap_sc = (ls + rs) * 0.5
-            basis = _build_basis(cap_sc - cap_hc, rs - ls)
+            primary = cap_sc - cap_hc
         else:
-            # No hips — use a vertical-ish fallback
-            basis = _build_basis(Vec3(0, 1, 0), rs - ls)
-        return basis
+            primary = Vec3(0, 1, 0)  # assume upright
+        cap_torso = _build_basis(primary, rs - ls)
+        if cap_torso is None:
+            return None
+        cap_sd = (rs - ls).length()
+        if cap_sd < 1e-6:
+            return None
+        return cap_sc, cap_torso, cap_sd
+
+    def _to_rig(self, pos, cap_sc, cap_torso, scale):
+        """Map a capture-space position → actor-local rig position."""
+        offset = pos - cap_sc
+        local = _world_to_basis(offset, cap_torso)
+        local = Vec3(local.x, local.y, local.z * TORSO_DEPTH_SIGN)
+        return self._rig_sc + _basis_to_world(local, self._rig_torso) * scale
+
+    def _direction_preserving_chain(self, cap_shoulder, cap_elbow, cap_wrist, side, cap_sc, cap_torso, scale):
+        """Place shoulder/elbow/wrist using capture directions but rig bone lengths."""
+        rig_upper_len = self._rig_bones[side]["upper"]
+        rig_lower_len = self._rig_bones[side]["lower"]
+
+        rig_shoulder = self._to_rig(cap_shoulder, cap_sc, cap_torso, scale)
+
+        # Upper arm: capture direction, rig length
+        cap_ua_dir = cap_elbow - cap_shoulder
+        ua_len = cap_ua_dir.length()
+        if ua_len > 1e-6:
+            ua_dir_rig = self._to_rig(cap_elbow, cap_sc, cap_torso, scale) - rig_shoulder
+            ua_dir_len = ua_dir_rig.length()
+            if ua_dir_len > 1e-6:
+                ua_dir_rig = ua_dir_rig * (1.0 / ua_dir_len)
+            else:
+                ua_dir_rig = Vec3(0, 0, -1)
+        else:
+            ua_dir_rig = Vec3(0, 0, -1)
+        rig_elbow = rig_shoulder + ua_dir_rig * rig_upper_len
+
+        # Forearm: capture direction, rig length
+        cap_fa_dir = cap_wrist - cap_elbow
+        fa_len = cap_fa_dir.length()
+        if fa_len > 1e-6:
+            fa_dir_rig = self._to_rig(cap_wrist, cap_sc, cap_torso, scale) - self._to_rig(cap_elbow, cap_sc, cap_torso, scale)
+            fa_dir_len = fa_dir_rig.length()
+            if fa_dir_len > 1e-6:
+                fa_dir_rig = fa_dir_rig * (1.0 / fa_dir_len)
+            else:
+                fa_dir_rig = Vec3(0, 0, -1)
+        else:
+            fa_dir_rig = Vec3(0, 0, -1)
+        rig_wrist = rig_elbow + fa_dir_rig * rig_lower_len
+
+        return rig_shoulder, rig_elbow, rig_wrist
+
+    def _anchor_hand_3d(self, hlms, rig_wrist, side):
+        """Scale and translate hand landmarks so wrist(0) sits at *rig_wrist*
+        and overall hand size matches the rig's hand size."""
+        w0 = hlms.get(0)
+        if w0 is None:
+            return {}
+        mid = hlms.get(9)
+        cap_hs = (mid - w0).length() if mid is not None else 0.15
+        rig_hs = self._rig_hand_size.get(side, 0.05)
+        s = rig_hs / max(cap_hs, 1e-4)
+        return {i: rig_wrist + (p - w0) * s for i, p in hlms.items()}
 
     def _update_3d(self, pose_lms, hand_lms):
         self._clear_node("_3d_geom")
-
-        cap_torso = self._build_capture_torso(pose_lms)
-        if cap_torso is None:
+        tb = self._capture_torso_basis(pose_lms)
+        if tb is None:
             return
+        cap_sc, cap_torso, cap_sd = tb
+        scale = self._rig_shoulder_dist / cap_sd
 
-        segs = LineSegs("lm-debug-3d")
+        ls = LineSegs("lm-debug-3d")
+        skip = _active_pose_indices()
 
-        # --- build bone-length-matched pose landmarks ---
+        # --- Build rig-space pose landmarks ---
+        # Start with simple affine mapping for torso + non-arm landmarks
         rig_pose: dict[int, Vec3] = {}
+        for i, p in pose_lms.items():
+            if i in skip:
+                continue
+            rig_pose[i] = self._to_rig(p, cap_sc, cap_torso, scale)
 
-        # Pin torso anchors to rig positions
-        rig_pose[11] = Vec3(self._rig_ls)
-        rig_pose[12] = Vec3(self._rig_rs)
-        rig_pose[23] = Vec3(self._rig_lh)
-        rig_pose[24] = Vec3(self._rig_rh)
+        # Override arm chain landmarks with bone-length–matched positions
+        arm_map = {
+            "L": (11, 13, 15),  # shoulder, elbow, wrist
+            "R": (12, 14, 16),
+        }
+        rig_wrists: dict[str, Vec3] = {}
+        for side, (si, ei, wi) in arm_map.items():
+            cs = pose_lms.get(si)
+            ce = pose_lms.get(ei)
+            cw = pose_lms.get(wi)
+            if cs is not None and ce is not None and cw is not None:
+                rs, re, rw = self._direction_preserving_chain(
+                    cs, ce, cw, side, cap_sc, cap_torso, scale,
+                )
+                rig_pose[si] = rs
+                rig_pose[ei] = re
+                rig_pose[wi] = rw
+                rig_wrists[side] = rw
 
-        # Arm chains — use capture direction, rig bone length
-        for side, sh_idx, el_idx, wr_idx in [("L", 11, 13, 15), ("R", 12, 14, 16)]:
-            sh_cap = pose_lms.get(sh_idx)
-            el_cap = pose_lms.get(el_idx)
-            wr_cap = pose_lms.get(wr_idx)
-            if sh_cap is not None and el_cap is not None:
-                ua_dir_cap = _norm(el_cap - sh_cap)
-                if ua_dir_cap is not None:
-                    ua_dir_rig = _norm(self._remap_dir(ua_dir_cap, cap_torso))
-                    if ua_dir_rig is not None:
-                        rig_pose[el_idx] = rig_pose[sh_idx] + ua_dir_rig * self._rig_bone_len[f"Upperarm.{side}"]
+                # Also remap the wrist sub-landmarks (thumb/index/pinky tips
+                # attached to wrist in the pose connections: 17-22)
+                wrist_children = {
+                    "L": [17, 19, 21],
+                    "R": [18, 20, 22],
+                }
+                for ci in wrist_children[side]:
+                    cp = pose_lms.get(ci)
+                    if cp is not None:
+                        # direction from capture wrist → child, scaled by
+                        # rig forearm length / capture forearm length
+                        cap_fa_len = (cw - ce).length()
+                        rig_fa_len = self._rig_bones[side]["lower"]
+                        child_scale = rig_fa_len / max(cap_fa_len, 1e-6)
+                        child_dir = self._to_rig(cp, cap_sc, cap_torso, scale) - self._to_rig(cw, cap_sc, cap_torso, scale)
+                        rig_pose[ci] = rw + child_dir * (child_scale / max(scale, 1e-6))
 
-                        if wr_cap is not None:
-                            fa_dir_cap = _norm(wr_cap - el_cap)
-                            if fa_dir_cap is not None:
-                                fa_dir_rig = _norm(self._remap_dir(fa_dir_cap, cap_torso))
-                                if fa_dir_rig is not None:
-                                    rig_pose[wr_idx] = rig_pose[el_idx] + fa_dir_rig * self._rig_bone_len[f"Forearm.{side}"]
+        pose_conns = _active_pose_connections()
+        _draw_bones(ls, rig_pose, pose_conns, POSE_BONE_COLOR, 2.5)
+        _draw_markers_3d(ls, rig_pose, POSE_MARKER_COLOR, 5.0, 0.008)
 
-        # Wrist fingertip stubs (17-22) — small offsets from rig wrist
-        # These are minor; place them near the wrist with direction hint
-        cap_sc = ((pose_lms.get(11) or Vec3()) + (pose_lms.get(12) or Vec3())) * 0.5
-        cap_sd = ((pose_lms.get(12) or Vec3()) - (pose_lms.get(11) or Vec3())).length() or 1.0
-        stub_scale = self._rig_shoulder_dist / cap_sd
-        for idx in (17, 18, 19, 20, 21, 22):
-            p = pose_lms.get(idx)
-            wr_idx = 15 if idx in (17, 19, 21) else 16
-            wr_cap = pose_lms.get(wr_idx)
-            rig_wr = rig_pose.get(wr_idx)
-            if p is not None and wr_cap is not None and rig_wr is not None:
-                offset_cap = p - wr_cap
-                offset_rig = self._remap_dir(offset_cap, cap_torso) * stub_scale
-                rig_pose[idx] = rig_wr + offset_rig
-
-        # Filter to visible indices
-        visible_pose = {i: p for i, p in rig_pose.items() if i in POSE_VISIBLE_INDICES}
-
-        _draw_bones(segs, visible_pose, POSE_CONNECTIONS, POSE_BONE_COLOR, 2.5)
-        _draw_markers_3d(segs, visible_pose, POSE_MARKER_COLOR, 5.0, 0.008)
-
-        # --- hands: anchored at rig wrist, scaled to rig hand size ---
+        # --- hands ---
         for side, hlms in hand_lms.items():
             if hlms is None:
                 continue
             color = LEFT_HAND_COLOR if side == "L" else RIGHT_HAND_COLOR
-            wr_idx = 15 if side == "L" else 16
-            rig_wrist = rig_pose.get(wr_idx)
-            if rig_wrist is None:
-                continue
 
-            w0 = hlms.get(0)
-            if w0 is None:
+            wrist_pos = rig_wrists.get(side)
+            if wrist_pos is None:
+                wi = 15 if side == "L" else 16
+                wrist_pos = rig_pose.get(wi)
+            if wrist_pos is None:
                 continue
-
-            mid = hlms.get(9)
-            cap_hand_span = (mid - w0).length() if mid is not None else 0.15
-            rig_hand_span = self._rig_hand_size.get(side, 0.05)
-            hand_scale = rig_hand_span / max(cap_hand_span, 1e-4)
 
             if self.hand_world_space:
-                # ASLLVD: hand landmarks in same capture space — remap direction + scale
-                rig_hand: dict[int, Vec3] = {}
-                for i, p in hlms.items():
-                    offset = p - w0
-                    rig_offset = self._remap_dir(offset, cap_torso) * hand_scale
-                    rig_hand[i] = rig_wrist + rig_offset
+                # ASLLVD: hand landmarks in same world space as pose
+                # Map wrist(0) → rig wrist, scale hand to rig hand size
+                rig_hand = self._anchor_hand_at_wrist_world(
+                    hlms, wrist_pos, side, cap_sc, cap_torso, scale,
+                )
             else:
-                # CSV: image-normalised space — translate + scale relative to wrist
-                rig_hand = {i: rig_wrist + (p - w0) * hand_scale for i, p in hlms.items()}
+                # CSV: hand landmarks in image-normalised space
+                rig_hand = self._anchor_hand_3d(hlms, wrist_pos, side)
 
-            _draw_bones(segs, rig_hand, HAND_CONNECTIONS, color, 1.5)
-            _draw_markers_3d(segs, rig_hand, color, 3.5, 0.005)
+            _draw_bones(ls, rig_hand, HAND_CONNECTIONS, color, 1.5)
+            _draw_markers_3d(ls, rig_hand, color, 3.5, 0.005)
 
-        node = segs.create()
+        node = ls.create()
         self._3d_geom = self._3d_root.attachNewNode(node)
 
+    def _anchor_hand_at_wrist_world(self, hlms, rig_wrist, side, cap_sc, cap_torso, scale):
+        """For ASLLVD (hand_world_space=True): map hand landmarks into rig space
+        with the wrist pinned at *rig_wrist* and hand scaled to rig hand size."""
+        w0 = hlms.get(0)
+        if w0 is None:
+            return {}
+        # Map all hand landmarks through the torso affine, then re-anchor
+        mapped = {i: self._to_rig(p, cap_sc, cap_torso, scale) for i, p in hlms.items()}
+        mapped_w0 = mapped.get(0)
+        if mapped_w0 is None:
+            return mapped
+        # Compute capture vs rig hand size for rescaling
+        mid = mapped.get(9)
+        cap_hs = (mid - mapped_w0).length() if mid is not None else 0.04
+        rig_hs = self._rig_hand_size.get(side, 0.05)
+        hs = rig_hs / max(cap_hs, 1e-4)
+        return {i: rig_wrist + (p - mapped_w0) * hs for i, p in mapped.items()}
+
     # =================================================================
-    #  2D overlay — scaled to match model on screen
+    #  2D overlay — model-proportioned flat skeleton
     # =================================================================
 
     def _update_2d(self, pose_lms, hand_lms):
@@ -522,37 +538,53 @@ class LandmarkVisualizer(DirectObject):
         if not pose_lms:
             return
 
-        ls_cap = pose_lms.get(11)
-        rs_cap = pose_lms.get(12)
-        if ls_cap is None or rs_cap is None:
+        skip = _active_pose_indices()
+
+        # Use only torso landmarks (shoulders + hips) to compute centering
+        # so that face/leg data doesn't pull the skeleton off-centre.
+        torso_ids = [11, 12, 23, 24]
+        anchor_pts = [pose_lms[i] for i in torso_ids if i in pose_lms]
+        if len(anchor_pts) < 2:
+            # Fall back to all available landmarks
+            anchor_pts = [p for i, p in pose_lms.items() if i not in skip]
+        if not anchor_pts:
             return
 
-        # Capture shoulder stats (X = horizontal, Y = vertical in our space)
-        cap_sc_x = (ls_cap.x + rs_cap.x) * 0.5
-        cap_sc_y = (ls_cap.y + rs_cap.y) * 0.5
-        cap_sd = abs(rs_cap.x - ls_cap.x)
-        if cap_sd < 1e-6:
-            return
+        xs = [p.x for p in anchor_pts]
+        ys = [p.y for p in anchor_pts]
+        cx = (min(xs) + max(xs)) * 0.5
+        cy = (min(ys) + max(ys)) * 0.5
 
-        # Screen anchor from projection (cached when entering 2D mode)
-        if self._2d_screen_sc is None or self._2d_screen_shoulder_w < 1e-6:
-            return
-        scr_sc = self._2d_screen_sc
-        s = self._2d_screen_shoulder_w / cap_sd
+        # Scale so that capture shoulder width == rig shoulder width in
+        # aspect2d units.  The 2D camera sits at Y = -2.2; at that distance
+        # (and default FOV 50) 1 unit actor-local ≈ 0.43 aspect2d units.
+        # We calibrate from shoulder distance so the 2D skeleton sits on
+        # top of the model.
+        cap_ls = pose_lms.get(11)
+        cap_rs = pose_lms.get(12)
+        if cap_ls is not None and cap_rs is not None:
+            cap_sd = (cap_rs - cap_ls).length()
+        else:
+            cap_sd = max(max(xs) - min(xs), 0.01)
+
+        # Target shoulder width on aspect2d  (empirically tuned)
+        target_shoulder_a2d = 0.30
+        s = target_shoulder_a2d / max(cap_sd, 1e-6)
+
+        # Vertical offset: centre the torso on the model
+        # Model torso centre in aspect2d ≈ 0.0 (roughly screen-centre)
+        oy = 0.0
 
         def _to2d(p: Vec3) -> Vec3:
-            return Vec3(
-                scr_sc.x + (p.x - cap_sc_x) * s,
-                0,
-                scr_sc.z + (p.y - cap_sc_y) * s,
-            )
+            return Vec3((p.x - cx) * s, 0, -(p.y - cy) * s + oy)
 
-        segs = LineSegs("lm-debug-2d")
+        ls_seg = LineSegs("lm-debug-2d")
 
-        # --- pose (filtered to visible indices) ---
-        sp = {i: _to2d(p) for i, p in pose_lms.items() if i in POSE_VISIBLE_INDICES}
-        _draw_bones(segs, sp, POSE_CONNECTIONS, POSE_BONE_COLOR, 2.5)
-        _draw_markers_2d(segs, sp, POSE_MARKER_COLOR, 6.0, 0.018)
+        # --- pose ---
+        sp = {i: _to2d(p) for i, p in pose_lms.items() if i not in skip}
+        pose_conns = _active_pose_connections()
+        _draw_bones(ls_seg, sp, pose_conns, POSE_BONE_COLOR, 2.5)
+        _draw_markers_2d(ls_seg, sp, POSE_MARKER_COLOR, 6.0, 0.018)
 
         # --- hands ---
         for side, hlms in hand_lms.items():
@@ -563,7 +595,7 @@ class LandmarkVisualizer(DirectObject):
             if self.hand_world_space:
                 sh = {i: _to2d(p) for i, p in hlms.items()}
             else:
-                # CSV: anchor at the projected pose-wrist position
+                # CSV: anchor at pose wrist screen position, scale to match
                 wi = 15 if side == "L" else 16
                 pw = pose_lms.get(wi)
                 w0 = hlms.get(0)
@@ -572,17 +604,17 @@ class LandmarkVisualizer(DirectObject):
                 sw = _to2d(pw)
                 mid = hlms.get(9)
                 cap_hs = (mid - w0).length() if mid is not None else 0.15
-                # Target hand screen size ≈ 35% of screen shoulder width
-                hs = (self._2d_screen_shoulder_w * 0.35 / max(cap_hs, 1e-4))
+                # Target hand screen-size: proportion of shoulder width
+                hs = (target_shoulder_a2d * 0.40 / max(cap_hs, 1e-4))
                 sh = {
-                    i: Vec3(sw.x + (p.x - w0.x) * hs, 0, sw.z + (p.y - w0.y) * hs)
+                    i: Vec3(sw.x + (p.x - w0.x) * hs, 0, sw.z - (p.y - w0.y) * hs)
                     for i, p in hlms.items()
                 }
 
-            _draw_bones(segs, sh, HAND_CONNECTIONS, color, 1.5)
-            _draw_markers_2d(segs, sh, color, 4.0, 0.010)
+            _draw_bones(ls_seg, sh, HAND_CONNECTIONS, color, 1.5)
+            _draw_markers_2d(ls_seg, sh, color, 4.0, 0.010)
 
-        node = segs.create()
+        node = ls_seg.create()
         self._2d_geom = self._2d_root.attachNewNode(node)
 
     # ----- cleanup ---------------------------------------------------
@@ -593,8 +625,6 @@ class LandmarkVisualizer(DirectObject):
         self._clear_node("_2d_geom")
         if self._mode_text is not None:
             self._mode_text.destroy()
-        if self._controls_text is not None:
-            self._controls_text.destroy()
         self._3d_root.removeNode()
         self._2d_root.removeNode()
         if self._cam_task_paused:
