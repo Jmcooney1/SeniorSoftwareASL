@@ -7,10 +7,15 @@ import importlib
 pd = importlib.import_module("panda_main")
 
 app = pd.PandaApp()
-print("PandaApp created; anim folder used:", getattr(app, 'landmark_animator', None) is not None)
+print("PandaApp created; animator present:", getattr(app, 'landmark_animator', None) is not None)
 if getattr(app, 'landmark_animator', None) is not None:
+    print("Backend:", getattr(app.landmark_animator, "backend", "<unknown>"))
     print("Animator enabled:", app.landmark_animator.enabled)
     try:
-        print("Anim dir:", app.landmark_animator.anim_dir)
+        print("Selected clip:", app.landmark_animator.selected_clip_path)
+    except Exception:
+        pass
+    try:
+        print("Selected source:", app.landmark_animator.selected_clip_source)
     except Exception:
         pass
