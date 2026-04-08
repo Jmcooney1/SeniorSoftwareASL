@@ -200,15 +200,23 @@ class LandmarkVisualizer(DirectObject):
                 "lower": (wj - ej).length(),
             }
 
-        # Rig hand size (wrist → middle-finger base)
+        # Rig hand size – full hand (wrist → middle fingertip)
+        # Used by CSV _anchor_hand_3d for stable scaling.
         self._rig_hand_size: dict[str, float] = {}
+        # Rig metacarpal size (wrist → middle MCP)
+        # Used by ASLLVD _anchor_hand_at_wrist_world where landmarks
+        # are already in world-space and only need MCP-level rescaling.
+        self._rig_mcp_size: dict[str, float] = {}
         for side in ("L", "R"):
             try:
                 wp = self._jpos(f"DEF-Hand.{side}")
-                mp = self._jpos(f"DEF-Middle1.{side}")
-                self._rig_hand_size[side] = (mp - wp).length()
+                mcp = self._jpos(f"DEF-Middle1.{side}")
+                tip = self._jpos(f"DEF-Middle3.{side}")
+                self._rig_hand_size[side] = (tip - wp).length()
+                self._rig_mcp_size[side] = (mcp - wp).length()
             except Exception:
-                self._rig_hand_size[side] = 0.05
+                self._rig_hand_size[side] = 0.12
+                self._rig_mcp_size[side] = 0.025
 
         # ---- camera save-state for 2D lock ----
         self._saved_cam_pos: Vec3 | None = None
@@ -414,8 +422,8 @@ class LandmarkVisualizer(DirectObject):
     def _anchor_hand_3d(self, hlms, rig_wrist, side, rig_pose):
         """Scale, orient, and translate CSV hand landmarks so wrist(0)
         sits at *rig_wrist*, the hand is rotated to match the pose
-        wrist-triangle orientation, and overall hand size is derived
-        from the pose wrist-triangle (bridging image→rig scale)."""
+        wrist-triangle orientation, and overall hand size matches the
+        rig model's hand."""
         w0 = hlms.get(0)
         if w0 is None:
             return {}
@@ -426,35 +434,21 @@ class LandmarkVisualizer(DirectObject):
         p_idx = rig_pose.get(ii)
         p_pnk = rig_pose.get(pi)
 
-        # --- scale factor: pose triangle size vs hand-model size ---
-        # The pose sub-landmarks (19/20 = index tip, 17/18 = pinky tip)
-        # in rig_pose tell us "how big the hand should be" in rig space.
-        # Comparing to the hand model's corresponding fingertip distances
-        # gives the image→rig scale factor.
-        rig_dists: list[float] = []
-        if p_w is not None and p_idx is not None:
-            rig_dists.append((p_idx - p_w).length())
-        if p_w is not None and p_pnk is not None:
-            rig_dists.append((p_pnk - p_w).length())
-
-        img_dists: list[float] = []
-        h_itip = hlms.get(8)    # index fingertip
-        h_ptip = hlms.get(20)   # pinky fingertip
-        if h_itip is not None:
-            img_dists.append((h_itip - w0).length())
-        if h_ptip is not None:
-            img_dists.append((h_ptip - w0).length())
-
-        if rig_dists and img_dists:
-            rig_avg = sum(rig_dists) / len(rig_dists)
-            img_avg = sum(img_dists) / len(img_dists)
-            s = rig_avg / max(img_avg, 1e-6)
-        else:
-            # Fallback: rig hand bone size / capture hand span
-            mid = hlms.get(9)
-            cap_hs = (mid - w0).length() if mid is not None else 0.15
-            rig_hs = self._rig_hand_size.get(side, 0.05)
-            s = rig_hs / max(cap_hs, 1e-4)
+        # --- scale factor: rig full-hand vs capture palm size ---
+        # MCP joints (5, 9, 13, 17) are structurally rigid relative to
+        # the wrist, so their average distance from wrist(0) is *stable*
+        # across all hand poses — unlike fingertips which move enormously
+        # between an open hand and a fist.
+        #
+        # We scale so that the capture MCP region maps to the rig's full
+        # hand length (DEF-Hand → DEF-Middle3), corrected by a fixed
+        # anatomical proportion (MCP ≈ 53% of full hand in MediaPipe).
+        mcp_lms = [hlms.get(i) for i in (5, 9, 13, 17)]
+        mcp_dists = [(lm - w0).length() for lm in mcp_lms if lm is not None]
+        cap_mcp = sum(mcp_dists) / len(mcp_dists) if mcp_dists else 0.10
+        rig_hs = self._rig_hand_size.get(side, 0.12)
+        # MCP avg is ~53% of full hand span in MediaPipe image-space
+        s = rig_hs * 0.53 / max(cap_mcp, 1e-6)
 
         # --- source basis from hand landmark palm plane ---
         h_idx_mcp = hlms.get(5)    # index MCP
@@ -474,9 +468,18 @@ class LandmarkVisualizer(DirectObject):
 
         # --- rotate, scale, translate ---
         if src_basis is not None and tgt_basis is not None:
+            # The target basis is built from rig_pose landmarks that went
+            # through _to_rig, which applies TORSO_DEPTH_SIGN (−1) to the
+            # depth component.  This flips the wrist-triangle's palm normal
+            # (Z-axis of the basis).  Negate the decomposed Z so the palm
+            # faces the correct direction after recomposition.
+            def _depth_corrected(v: Vec3) -> Vec3:
+                c = _world_to_basis(v, src_basis)
+                return Vec3(c.x, c.y, -c.z)
+
             return {
                 i: rig_wrist + _basis_to_world(
-                    _world_to_basis(p - w0, src_basis), tgt_basis
+                    _depth_corrected(p - w0), tgt_basis
                 ) * s
                 for i, p in hlms.items()
             }
@@ -583,11 +586,16 @@ class LandmarkVisualizer(DirectObject):
         mapped_w0 = mapped.get(0)
         if mapped_w0 is None:
             return mapped
-        # Compute capture vs rig hand size for rescaling
-        mid = mapped.get(9)
-        cap_hs = (mid - mapped_w0).length() if mid is not None else 0.04
-        rig_hs = self._rig_hand_size.get(side, 0.05)
-        hs = rig_hs / max(cap_hs, 1e-4)
+        # Use average of 4 MCP landmarks for stable size reference
+        # (same approach as CSV _anchor_hand_3d).
+        mcp_dists = [
+            (mapped[i] - mapped_w0).length()
+            for i in (5, 9, 13, 17) if i in mapped
+        ]
+        cap_mcp = sum(mcp_dists) / len(mcp_dists) if mcp_dists else 0.06
+        rig_hs = self._rig_hand_size.get(side, 0.12)
+        # MCP avg ≈ 53% of full hand span — same proportion as CSV path
+        hs = rig_hs * 0.53 / max(cap_mcp, 1e-4)
         return {i: rig_wrist + (p - mapped_w0) * hs for i, p in mapped.items()}
 
     # =================================================================
@@ -662,24 +670,21 @@ class LandmarkVisualizer(DirectObject):
                 continue
             color = LEFT_HAND_COLOR if side == "L" else RIGHT_HAND_COLOR
 
-            if self.hand_world_space:
-                sh = {i: _to2d(p) for i, p in hlms.items()}
-            else:
-                # CSV: anchor at pose wrist screen position, scale to match
-                wi = 15 if side == "L" else 16
-                pw = pose_lms.get(wi)
-                w0 = hlms.get(0)
-                if pw is None or w0 is None:
-                    continue
-                sw = _to2d(pw)
-                mid = hlms.get(9)
-                cap_hs = (mid - w0).length() if mid is not None else 0.15
-                # Target hand screen-size: proportion of shoulder width
-                hs = (target_shoulder_a2d * 0.40 / max(cap_hs, 1e-4))
-                sh = {
-                    i: Vec3(sw.x + (p.x - w0.x) * hs, 0, sw.z + (p.y - w0.y) * hs)
-                    for i, p in hlms.items()
-                }
+            # CSV: anchor at pose wrist screen position, scale to match
+            wi = 15 if side == "L" else 16
+            pw = pose_lms.get(wi)
+            w0 = hlms.get(0)
+            if pw is None or w0 is None:
+                continue
+            sw = _to2d(pw)
+            mid = hlms.get(9)
+            cap_hs = (mid - w0).length() if mid is not None else 0.15
+            # Target hand screen-size: proportion of shoulder width
+            hs = (target_shoulder_a2d * 0.37 / max(cap_hs, 1e-4))
+            sh = {
+                i: Vec3(sw.x + (p.x - w0.x) * hs, 0, sw.z + (p.y - w0.y) * hs)
+                for i, p in hlms.items()
+            }
 
             _draw_bones(ls_seg, sh, HAND_CONNECTIONS, color, 1.5)
             _draw_markers_2d(ls_seg, sh, color, 4.0, 0.010)

@@ -1,4 +1,3 @@
-"""Runner script to start the Panda app as a separate process (popout)."""
 import os
 import sys
 

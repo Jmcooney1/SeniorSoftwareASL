@@ -115,8 +115,8 @@ class SignLauncherDialog(QDialog):
         layout.addWidget(self._info_label)
 
         buttons = QDialogButtonBox()
-        self._launch_btn = buttons.addButton("Launch", QDialogButtonBox.AcceptRole)
-        self._cancel_btn = buttons.addButton("Cancel", QDialogButtonBox.RejectRole)
+        self._launch_btn = buttons.addButton("Launch", QDialogButtonBox.AcceptRole) # pyright: ignore[reportAttributeAccessIssue]
+        self._cancel_btn = buttons.addButton("Cancel", QDialogButtonBox.RejectRole) # pyright: ignore[reportAttributeAccessIssue]
         self._launch_btn.clicked.connect(self._on_launch)
         self._cancel_btn.clicked.connect(self.reject)
         layout.addWidget(buttons)
@@ -154,7 +154,7 @@ class SignLauncherDialog(QDialog):
 
     def run(self) -> bool:
         """Show the dialog. Returns True if user clicked Launch."""
-        return self.exec() == QDialog.Accepted
+        return self.exec() == QDialog.Accepted # pyright: ignore[reportAttributeAccessIssue]
 
 
 # ---------------------------------------------------------------------------
@@ -244,9 +244,9 @@ def main() -> None:
         return
 
     if dialog.result_backend == SignLauncherDialog.BACKEND_ASLLVD:
-        _launch_asllvd(dialog.result_sign)
+        _launch_asllvd(dialog.result_sign) # pyright: ignore[reportArgumentType]
     else:
-        _launch_csv(dialog.result_csv_path)
+        _launch_csv(dialog.result_csv_path) # pyright: ignore[reportArgumentType]
 
 
 if __name__ == "__main__":

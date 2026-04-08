@@ -2,7 +2,7 @@
 
 Reads MediaPipe ``pose_world_landmarks`` (hip-centred real-world metres)
 and ``hand_landmarks`` (normalised image-space) exported as CSV files from
-SignSchool videos (~4 250 signs in ``dataSet/david-dataset/Video/Landmarks/world-pose/``).
+SignSchool videos (~4 250 signs in ``dataSet/david-dataset/Landmarks/world-pose/``).
 
 Reuses proven vector/basis helpers and rig constants from
 ``unified_animation`` while providing a fresh animation pipeline.
@@ -59,7 +59,7 @@ if TYPE_CHECKING:
 # Constants (CSV-specific – may diverge from ASLLVD tuning)
 # ---------------------------------------------------------------------------
 
-CSV_DIR = (Path(__file__).resolve().parent / ".." / ".." / "dataSet" / "david-dataset" / "Video" / "Landmarks" / "world-pose").resolve()
+CSV_DIR = (Path(__file__).resolve().parent / ".." / ".." / "dataSet" / "david-dataset" / "Landmarks" / "world-pose").resolve()
 CSV_FILENAME_RE = re.compile(r"^SignSchool\s+(.+?)\s+\[(\d+)x(\d+)\]\.csv$")
 
 DEFAULT_CSV_FPS = 30.0
@@ -388,14 +388,13 @@ class CSVRigAnimator:
         if c is not None:
             return c
         lj = self._lj(name)
-        t = JointRestTransform(pos=_v(lj.getPos()), quat=_q(lj.getQuat()), scale=_v(lj.getScale()))
+        t = JointRestTransform(pos=_v(lj.getPos()), quat=_q(lj.getQuat()), scale=_v(lj.getScale())) # type: ignore
         self._rest[name] = t
         return t
 
     # ------------------------------------------------------------------
     # Rig geometry (initialised once from default pose)
     # ------------------------------------------------------------------
-
     def _build_rest_torso(self) -> tuple[Vec3, Vec3, Vec3]:
         ls = self._wj("HNG-Upperarm_Parent.L").getPos(self.actor)
         rs = self._wj("HNG-Upperarm_Parent.R").getPos(self.actor)
