@@ -2,9 +2,7 @@
 
 Usage
 -----
-Run this file directly::
-
-    python sign_launcher.py
+Ineractive character sign viewer
 
 A PySide6 dialog lets you choose a **Sign** from the available CSV
 (MediaPipe pose_world) data files.
