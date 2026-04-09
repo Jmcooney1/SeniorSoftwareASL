@@ -626,6 +626,11 @@ class CSVRigAnimator:
             self._wj(f"DEF-Pinky1.{side}").getPos(self.actor) # type: ignore
             - self._wj(f"DEF-Index1.{side}").getPos(self.actor) # type: ignore
         )
+        # Pinky-Index points in opposite world directions for L vs R,
+        # flipping the palm normal from cross(fwd, across).  Negate for
+        # L so the palm always faces the same way (toward the actual palm).
+        if side == "L":
+            across = across * -1.0
         return _build_basis(fwd, across) or (Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1))
 
     def _build_arm_ctrls(self, side: str) -> dict[str, ArmControl]:
