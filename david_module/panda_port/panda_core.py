@@ -24,13 +24,6 @@ BASE_DIR = Path(__file__).resolve().parent
 MODEL_PATH = BASE_DIR / "models" / "rain.bam.pz"
 
 
-# Dataset root
-ASLLVD_DATASET_ROOT = (BASE_DIR / ".." / ".." / "dataSet" / "david-dataset" / "ASLLVD-Skeleton").resolve()
-
-# Active sign to animate
-ACTIVE_GLOSS = "car"
-ACTIVE_VARIANT: int | None = None
-
 # Default transform applied to the loaded character.
 MODEL_POS = LPoint3f(0, 0, -1)
 MODEL_HPR = Vec3(0, -90, 0)
@@ -377,44 +370,9 @@ def create_sign_hud(world, animator):
     )
 
 
-def _resolve_clip(gloss: str, variant: int | None = None) -> Path:
-    """Find a PKL clip by gloss in the ASLLVD-Skeleton dataset."""
-    from unified_animation import resolve_asllvd_clip
-
-    if ASLLVD_DATASET_ROOT.exists():
-        clip = resolve_asllvd_clip(ASLLVD_DATASET_ROOT, gloss, variant)
-        if clip is not None:
-            return clip
-
-    raise FileNotFoundError(
-        f"No PKL clip found for gloss {gloss!r} in ASLLVD dataset"
-    )
-
-
-def get_animation_config() -> AnimationConfig:
-    gloss = ACTIVE_GLOSS.strip()
-    if not gloss:
-        raise ValueError("ACTIVE_GLOSS must be a non-empty string")
-    clip_path = _resolve_clip(gloss, ACTIVE_VARIANT)
-    return AnimationConfig(
-        backend="unified",
-        dataset_root=clip_path.parent,
-        gloss=gloss,
-        variant=ACTIVE_VARIANT,
-        clip_path=clip_path,
-    )
-
-
-def create_animator(actor: Actor):
-    from unified_animation import UnifiedRigAnimator
-
-    config = get_animation_config()
-    return UnifiedRigAnimator(actor, config=config)
-
-
 def create_csv_animator(actor: Actor, csv_path):
     """Create a CSV-based animator for *csv_path*."""
-    from csv_animation import CSVRigAnimator
+    from animation import CSVRigAnimator
     from pathlib import Path
 
     return CSVRigAnimator(actor, csv_path=Path(csv_path))

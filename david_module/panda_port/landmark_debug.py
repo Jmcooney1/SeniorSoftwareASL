@@ -22,7 +22,7 @@ from direct.gui.OnscreenText import OnscreenText
 from direct.showbase.DirectObject import DirectObject
 from panda3d.core import LineSegs, NodePath, Point2, Point3, TextNode, Vec3, Vec4
 
-from unified_animation import (
+from animation import (
     TORSO_DEPTH_SIGN,
     _v,
     _norm,

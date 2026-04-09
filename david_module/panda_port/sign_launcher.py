@@ -40,7 +40,7 @@ if HERE not in sys.path:
 
 
 def _available_csv_signs() -> list[tuple[str, Path]]:
-    from csv_animation import list_csv_signs
+    from animation import list_csv_signs
 
     return list_csv_signs()
 
