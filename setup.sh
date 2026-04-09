@@ -26,7 +26,7 @@ echo "✅ Python3 found"
 
 # ── Step 2: Dataset info ─────────────────────
 echo ""
-echo "▶ Dataset path is configured via the app's Settings page on first launch."
+echo "▶ Dataset path is configured via config.json (created automatically)."
 echo "   Make sure your dataSet/wlasl-complete folder is accessible on this machine."
 echo "✅ Skipping dataset check (handled by config.json at runtime)"
 
@@ -56,14 +56,20 @@ echo "✅ Packages installed"
 
 # ── Step 5: Build the app ─────────────────────
 echo ""
-echo "▶ Building ASL-Translator.app (this takes 1-3 minutes)..."
+echo "▶ Building ASL-Translator distribution folder..."
 MEDIAPIPE_DIR=$(python3 -c "import mediapipe, os; print(os.path.dirname(mediapipe.__file__))")
 echo "   MediaPipe found at: $MEDIAPIPE_DIR"
 
+# Resolve absolute paths so PyInstaller can always find the data folders
+KILY_DIR="$(pwd)/kily_module"
+DREWS_DIR="$(pwd)/drews_module"
+
 pyinstaller --onedir --windowed \
     --name "ASL-Translator" \
-    --add-data "kily_module:kily_module" \
-    --add-data "drews_module:drews_module" \
+    --distpath "$(pwd)/dist_temp" \
+    --workpath "$(pwd)/build_temp" \
+    --add-data "$KILY_DIR:kily_module" \
+    --add-data "$DREWS_DIR:drews_module" \
     --add-data "$MEDIAPIPE_DIR:mediapipe" \
     --hidden-import cv2 \
     --hidden-import numpy \
@@ -78,19 +84,48 @@ if [ $? -ne 0 ]; then
     echo "❌ Build failed. Check the output above for errors."
     exit 1
 fi
-echo "✅ App built successfully"
+echo "✅ App built"
 
-# ── Step 6: Move to Applications ──────────────
+# ── Step 6: Assemble the final folder layout ───
 echo ""
-echo "▶ Installing to /Applications..."
-cp -r dist/ASL-Translator.app /Applications/
-chmod +x /Applications/ASL-Translator.app
+echo "▶ Creating ASL-Translator distribution layout..."
+
+DIST="$(pwd)/dist/ASL-Translator"
+rm -rf "$DIST"
+mkdir -p "$DIST/dataset"
+mkdir -p "$DIST/savedVideoPoints"
+
+# Move the built bundle into ASL_app/
+mv "$(pwd)/dist_temp/ASL-Translator" "$DIST/ASL_app"
+
+# Clean up temp build artifacts
+rm -rf "$(pwd)/dist_temp"
+rm -rf "$(pwd)/build_temp"
+rm -f  "$(pwd)/ASL-Translator.spec"
 
 if [ $? -eq 0 ]; then
-    echo "✅ App installed to /Applications/ASL-Translator.app"
+    echo "✅ Layout created"
 else
-    echo "⚠️  Could not copy to /Applications (permission issue)"
-    echo "   You can manually drag dist/ASL-Translator.app to Applications"
+    echo "❌ Failed to assemble layout"
+    exit 1
+fi
+
+# ── Step 7: Create config.json ────────────────
+echo ""
+echo "▶ Creating config.json..."
+
+cat > "$DIST/config.json" << EOF
+{
+    "dataset_path": "$DIST/dataset",
+    "save_dir": "$DIST/savedVideoPoints"
+}
+EOF
+
+if [ $? -eq 0 ]; then
+    echo "✅ config.json created"
+else
+    echo "❌ Failed to create config.json"
+    exit 1
 fi
 
 # ── Done ──────────────────────────────────────
@@ -99,14 +134,17 @@ echo "╔═══════════════════════�
 echo "║           Setup Complete! 🎉         ║"
 echo "╠══════════════════════════════════════╣"
 echo "║                                      ║"
-echo "║  App location:                       ║"
-echo "║  /Applications/ASL-Translator.app    ║"
+echo "║  Distribution folder:                ║"
+echo "║  dist/ASL-Translator/                ║"
+echo "║  ├── ASL_app/   ← launch from here   ║"
+echo "║  ├── dataset/   ← put your data here ║"
+echo "║  ├── savedVideoPoints/               ║"
+echo "║  └── config.json                     ║"
 echo "║                                      ║"
-echo "║  OR double-click:                    ║"
-echo "║  dist/ASL-Translator.app             ║"
-echo "║                                      ║"
-echo "║  Set dataset path in Settings        ║"
-echo "║  on first launch of the app          ║"
+echo "║  Drop your dataset here:             ║"
+echo "║  dataset/kily_dataset/wlasl-complete/║"
+echo "║  ├── wlasl_class_list.txt            ║"
+echo "║  └── videos/                         ║"
 echo "║                                      ║"
 echo "╚══════════════════════════════════════╝"
 echo ""
