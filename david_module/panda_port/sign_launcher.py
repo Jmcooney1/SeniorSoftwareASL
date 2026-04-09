@@ -6,9 +6,8 @@ Run this file directly::
 
     python sign_launcher.py
 
-A PySide6 dialog lets you choose:
-* **Backend** – ASLLVD (PKL skeleton data) or CSV (MediaPipe pose_world exports).
-* **Sign** – a list populated from the available data files.
+A PySide6 dialog lets you choose a **Sign** from the available CSV
+(MediaPipe pose_world) data files.
 
 After clicking *Launch*, the Panda3D window opens and plays the selected sign.
 """
@@ -19,7 +18,6 @@ import os
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -40,21 +38,6 @@ if HERE not in sys.path:
 # Data discovery
 # ---------------------------------------------------------------------------
 
-def _available_asllvd_signs() -> list[str]:
-    """Return sorted list of glosses found in ASLLVD PKL_POSES."""
-    from panda_core import ASLLVD_DATASET_ROOT
-
-    pkl_dir = ASLLVD_DATASET_ROOT / "PKL_POSES"
-    if not pkl_dir.is_dir():
-        return []
-    seen: set[str] = set()
-    for p in pkl_dir.glob("*.pkl"):
-        stem = p.stem
-        parts = stem.rsplit("-", 1)
-        if parts:
-            seen.add(parts[0])
-    return sorted(seen, key=str.lower)
-
 
 def _available_csv_signs() -> list[tuple[str, Path]]:
     from csv_animation import list_csv_signs
@@ -67,29 +50,20 @@ def _available_csv_signs() -> list[tuple[str, Path]]:
 # ---------------------------------------------------------------------------
 
 class SignLauncherDialog(QDialog):
-    BACKEND_ASLLVD = "ASLLVD (PKL)"
-    BACKEND_CSV = "CSV (MediaPipe)"
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("ASL Sign Launcher")
-        self.setFixedSize(380, 180)
+        self.setFixedSize(380, 160)
 
-        self.result_backend: str | None = None
         self.result_sign: str | None = None
         self.result_csv_path: Path | None = None
 
-        self._asllvd_signs: list[str] = []
         self._csv_signs: list[tuple[str, Path]] = []
         self._load_sign_lists()
         self._build_ui()
-        self._on_backend_changed()
 
     def _load_sign_lists(self) -> None:
-        try:
-            self._asllvd_signs = _available_asllvd_signs()
-        except Exception:
-            self._asllvd_signs = []
         try:
             self._csv_signs = _available_csv_signs()
         except Exception:
@@ -99,18 +73,15 @@ class SignLauncherDialog(QDialog):
         layout = QVBoxLayout(self)
 
         form = QFormLayout()
-        self._backend_combo = QComboBox()
-        self._backend_combo.addItems([self.BACKEND_ASLLVD, self.BACKEND_CSV])
-        self._backend_combo.currentIndexChanged.connect(self._on_backend_changed)
-        form.addRow("Backend:", self._backend_combo)
 
         self._sign_combo = QComboBox()
         self._sign_combo.setMinimumWidth(240)
+        self._sign_combo.addItems([name for name, _ in self._csv_signs])
         form.addRow("Sign:", self._sign_combo)
 
         layout.addLayout(form)
 
-        self._info_label = QLabel()
+        self._info_label = QLabel(f"{len(self._csv_signs)} signs available")
         self._info_label.setStyleSheet("color: grey;")
         layout.addWidget(self._info_label)
 
@@ -121,34 +92,20 @@ class SignLauncherDialog(QDialog):
         self._cancel_btn.clicked.connect(self.reject)
         layout.addWidget(buttons)
 
-    def _on_backend_changed(self) -> None:
-        backend = self._backend_combo.currentText()
-        self._sign_combo.clear()
-        if backend == self.BACKEND_ASLLVD:
-            names = self._asllvd_signs
-            self._info_label.setText(f"{len(names)} ASLLVD signs available")
-        else:
-            names = [name for name, _ in self._csv_signs]
-            self._info_label.setText(f"{len(names)} CSV signs available")
-        self._sign_combo.addItems(names)
-
     def _on_launch(self) -> None:
         sign = self._sign_combo.currentText().strip()
         if not sign:
             QMessageBox.warning(self, "No sign selected", "Please select a sign from the dropdown.")
             return
 
-        backend = self._backend_combo.currentText()
-        if backend == self.BACKEND_CSV:
-            for name, path in self._csv_signs:
-                if name == sign:
-                    self.result_csv_path = path
-                    break
-            else:
-                QMessageBox.critical(self, "Not found", f"CSV file for '{sign}' not found.")
-                return
+        for name, path in self._csv_signs:
+            if name == sign:
+                self.result_csv_path = path
+                break
+        else:
+            QMessageBox.critical(self, "Not found", f"CSV file for '{sign}' not found.")
+            return
 
-        self.result_backend = backend
         self.result_sign = sign
         self.accept()
 
@@ -160,18 +117,6 @@ class SignLauncherDialog(QDialog):
 # ---------------------------------------------------------------------------
 # Panda launch
 # ---------------------------------------------------------------------------
-
-def _launch_asllvd(gloss: str) -> None:
-    import panda_core
-
-    panda_core.ACTIVE_GLOSS = gloss
-    panda_core.ACTIVE_VARIANT = None
-
-    from panda_main import PandaApp
-
-    app = PandaApp()
-    app.run()
-
 
 def _launch_csv(csv_path: Path) -> None:
     from direct.showbase.ShowBase import ShowBase
@@ -188,6 +133,7 @@ def _launch_csv(csv_path: Path) -> None:
     )
     from landmark_debug import LandmarkVisualizer
 
+    print(f"Launching Panda app | pose collection: CSV (MediaPipe) | pose: {csv_path.stem}")
     loadPrcFileData("", "win-size 1200 1000")
     base = ShowBase()
     base.disableMouse()
@@ -243,10 +189,7 @@ def main() -> None:
     if not dialog.run():
         return
 
-    if dialog.result_backend == SignLauncherDialog.BACKEND_ASLLVD:
-        _launch_asllvd(dialog.result_sign) # pyright: ignore[reportArgumentType]
-    else:
-        _launch_csv(dialog.result_csv_path) # pyright: ignore[reportArgumentType]
+    _launch_csv(dialog.result_csv_path) # pyright: ignore[reportArgumentType]
 
 
 if __name__ == "__main__":

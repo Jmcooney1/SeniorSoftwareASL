@@ -242,9 +242,9 @@ class CharacterPoseController(DirectObject):
     def _joint_rest_transform(self, joint_name: str) -> JointRestTransform:
         local_joint = self.actor.exposeJoint(None, PART_NAME, joint_name, localTransform=1)
         return JointRestTransform(
-            pos=Vec3(local_joint.getPos()),
-            quat=Quat(local_joint.getQuat()),
-            scale=Vec3(local_joint.getScale()),
+            pos=Vec3(local_joint.getPos()), # type: ignore
+            quat=Quat(local_joint.getQuat()), # type: ignore
+            scale=Vec3(local_joint.getScale()), # type: ignore
         )
 
     def _freeze_joint_with_hpr_offset(self, joint_name: str, hpr_offset: tuple[float, float, float]) -> None:
@@ -266,7 +266,7 @@ class CharacterPoseController(DirectObject):
             self._freeze_joint_with_hpr_offset(joint_name, hpr_offset)
 
     def _eye_forward_direction_in_head_space(self, side: str) -> Vec3:
-        direction = self.eye_world_nodes[side].getQuat(self.head_joint).xform(Vec3(0, 0, 1))
+        direction = self.eye_world_nodes[side].getQuat(self.head_joint).xform(Vec3(0, 0, 1)) # type: ignore
         direction.normalize()
         return direction
 
@@ -293,7 +293,7 @@ class CharacterPoseController(DirectObject):
 
     def _target_eye_angles(self, side: str) -> tuple[float, float]:
         if self.follow_camera and self.camera is not None:
-            eye_position = self.eye_world_nodes[side].getPos(self.head_joint)
+            eye_position = self.eye_world_nodes[side].getPos(self.head_joint) # type: ignore
             camera_position = self.camera.getPos(self.head_joint)
             direction = camera_position - eye_position
             if direction.length_squared() > 0.0:

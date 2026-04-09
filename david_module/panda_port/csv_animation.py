@@ -47,9 +47,11 @@ from unified_animation import (
     _lerp_vec,
     _blend_dir,
     _rot_between,
+    _rot_from_basis,
     _build_basis,
     _world_to_basis,
     _basis_to_world,
+    _remove_twist_from_offset,
 )
 
 if TYPE_CHECKING:
@@ -307,6 +309,7 @@ class CSVRigAnimator:
         self._prev_hand_quats: dict[str, Quat] = {}
         self._prev_torso: tuple[Vec3, Vec3, Vec3] | None = None
         self._cur_torso: tuple[Vec3, Vec3, Vec3] | None = None
+        self._ref_torso: tuple[Vec3, Vec3, Vec3] | None = None
         self._last_frame: int | None = None
 
         # Build rig data for both sides
@@ -317,7 +320,7 @@ class CSVRigAnimator:
             self.finger_ctrls[side] = self._build_finger_ctrls(side)
             self._arm_parent_world_q[side] = self._arm_parent_quat(side)
             self._hand_rest_basis[side] = self._build_hand_rest_basis(side)
-            hand_wq = _q(self._wj(f"FK-Hand.{side}").getQuat(self.actor))
+            hand_wq = _q(self._wj(f"FK-Hand.{side}").getQuat(self.actor)) # type: ignore
             self._hand_basis_in_fk_local[side] = tuple(
                 _norm(hand_wq.conjugate().xform(ax)) or ax
                 for ax in self._hand_rest_basis[side]
@@ -357,6 +360,7 @@ class CSVRigAnimator:
         self._prev_hand_quats.clear()
         self._prev_torso = None
         self._cur_torso = None
+        self._ref_torso = None
 
     # ------------------------------------------------------------------
     # Joint helpers
@@ -396,10 +400,10 @@ class CSVRigAnimator:
     # Rig geometry (initialised once from default pose)
     # ------------------------------------------------------------------
     def _build_rest_torso(self) -> tuple[Vec3, Vec3, Vec3]:
-        ls = self._wj("HNG-Upperarm_Parent.L").getPos(self.actor)
-        rs = self._wj("HNG-Upperarm_Parent.R").getPos(self.actor)
-        lh = self._wj("HNG-Thigh.L").getPos(self.actor)
-        rh = self._wj("HNG-Thigh.R").getPos(self.actor)
+        ls = self._wj("HNG-Upperarm_Parent.L").getPos(self.actor) # type: ignore
+        rs = self._wj("HNG-Upperarm_Parent.R").getPos(self.actor) # type: ignore
+        lh = self._wj("HNG-Thigh.L").getPos(self.actor) # type: ignore
+        rh = self._wj("HNG-Thigh.R").getPos(self.actor) # type: ignore
         sc = (ls + rs) * 0.5
         hc = (lh + rh) * 0.5
         return _build_basis(sc - hc, rs - ls) or (Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1))
@@ -407,15 +411,15 @@ class CSVRigAnimator:
     def _arm_parent_quat(self, side: str) -> Quat:
         name = f"FK-Upperarm.{side}"
         rest = self._rest_of(name)
-        wq = _q(self._wj(name).getQuat(self.actor))
-        return wq * rest.quat.conjugate()
+        wq = _q(self._wj(name).getQuat(self.actor)) # type: ignore
+        return rest.quat.conjugate() * wq
 
     def _build_hand_rest_basis(self, side: str) -> tuple[Vec3, Vec3, Vec3]:
-        hp = self._wj(f"DEF-Hand.{side}").getPos(self.actor)
-        fwd = self._wj(f"DEF-Middle1.{side}").getPos(self.actor) - hp
+        hp = self._wj(f"DEF-Hand.{side}").getPos(self.actor) # type: ignore
+        fwd = self._wj(f"DEF-Middle1.{side}").getPos(self.actor) - hp # type: ignore
         across = (
-            self._wj(f"DEF-Pinky1.{side}").getPos(self.actor)
-            - self._wj(f"DEF-Index1.{side}").getPos(self.actor)
+            self._wj(f"DEF-Pinky1.{side}").getPos(self.actor) # type: ignore
+            - self._wj(f"DEF-Index1.{side}").getPos(self.actor) # type: ignore
         )
         return _build_basis(fwd, across) or (Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1))
 
@@ -424,7 +428,7 @@ class CSVRigAnimator:
         for seg, (jb, cb) in ARM_JOINTS.items():
             jn, cn = f"{jb}.{side}", f"{cb}.{side}"
             rest = self._rest_of(jn)
-            rd = _norm(self._lj(cn).getPos()) or Vec3(0, 0, 1)
+            rd = _norm(self._lj(cn).getPos()) or Vec3(0, 0, 1) # type: ignore
             ctrls[seg] = ArmControl(joint_name=jn, rest=rest, rest_dir_local=rd)
         return ctrls
 
@@ -441,13 +445,13 @@ class CSVRigAnimator:
                 rest = self._rest_of(jn)
                 cn = cnames[i]
                 if cn is not None:
-                    rd = _norm(self._lj(cn).getPos()) or Vec3(0, 0, 1)
+                    rd = _norm(self._lj(cn).getPos()) or Vec3(0, 0, 1) # type: ignore
                 else:
                     parent_name = jnames[i - 1]
                     wj = self._wj(jn)
                     pj = self._wj(parent_name)
-                    wdir = _norm(wj.getPos(self.actor) - pj.getPos(self.actor))
-                    wq = wj.getQuat(self.actor)
+                    wdir = _norm(wj.getPos(self.actor) - pj.getPos(self.actor)) # type: ignore
+                    wq = wj.getQuat(self.actor) # type: ignore
                     rd = _norm(wq.conjugate().xform(wdir)) if wdir is not None else Vec3(0, 0, 1)
                     rd = rd or Vec3(0, 0, 1)
                 ca, cs = self._detect_curl_axis(side, jn, rest, rd)
@@ -467,8 +471,8 @@ class CSVRigAnimator:
         palm_world = hand_basis[2]
 
         rest_dir_parent = _norm(rest.quat.xform(rest_dir_local))
-        wq = _q(self._wj(joint_name).getQuat(self.actor))
-        parent_wq = wq * rest.quat.conjugate()
+        wq = _q(self._wj(joint_name).getQuat(self.actor)) # type: ignore
+        parent_wq = rest.quat.conjugate() * wq
         across_parent = _norm(parent_wq.conjugate().xform(across_world))
         palm_parent = _norm(parent_wq.conjugate().xform(palm_world))
 
@@ -531,9 +535,9 @@ class CSVRigAnimator:
     # ------------------------------------------------------------------
 
     def _update_arms(self, side: str, plms: dict[int, Vec3]) -> None:
-        if self._cur_torso is None:
+        if self._ref_torso is None:
             return
-        cap_torso = self._cur_torso
+        cap_torso = self._ref_torso
 
         si = POSE_LEFT_SHOULDER if side == "L" else POSE_RIGHT_SHOULDER
         ei = POSE_LEFT_ELBOW if side == "L" else POSE_RIGHT_ELBOW
@@ -620,7 +624,7 @@ class CSVRigAnimator:
         return stab
 
     def _current_hand_basis(self, side: str) -> tuple[Vec3, Vec3, Vec3]:
-        wq = _q(self._wj(f"FK-Hand.{side}").getQuat(self.actor))
+        wq = _q(self._wj(f"FK-Hand.{side}").getQuat(self.actor)) # type: ignore
         axes = tuple(
             _norm(wq.xform(al)) or aw
             for al, aw in zip(self._hand_basis_in_fk_local[side], self._hand_rest_basis[side])
@@ -663,13 +667,13 @@ class CSVRigAnimator:
         # Rig forearm frame
         fa_jn = f"FK-Forearm.{side}"
         fa_rest = self._rest_of(fa_jn)
-        fa_wq = _q(self._wj(fa_jn).getQuat(self.actor))
+        fa_wq = _q(self._wj(fa_jn).getQuat(self.actor)) # type: ignore
         rig_fa_fwd = _norm(fa_wq.xform(fa_rest.quat.conjugate().xform(
-            _norm(self._lj(f"FK-Hand.{side}").getPos()) or Vec3(0, 0, 1)
+            _norm(self._lj(f"FK-Hand.{side}").getPos()) or Vec3(0, 0, 1) # type: ignore
         )))
         ua_jn = f"FK-Upperarm.{side}"
-        ua_wq = _q(self._wj(ua_jn).getQuat(self.actor))
-        rig_ua_child = _norm(self._lj(fa_jn).getPos()) or Vec3(0, 0, 1)
+        ua_wq = _q(self._wj(ua_jn).getQuat(self.actor)) # type: ignore
+        rig_ua_child = _norm(self._lj(fa_jn).getPos()) or Vec3(0, 0, 1) # type: ignore
         rig_ua_dir = _norm(ua_wq.xform(_q(self._rest_of(ua_jn).quat).conjugate().xform(rig_ua_child)))
         if rig_fa_fwd is None or rig_ua_dir is None:
             return
@@ -685,13 +689,29 @@ class CSVRigAnimator:
         if tgt_basis is None:
             return
 
-        rest_basis = self._hand_rest_basis[side]
-        from unified_animation import _rot_from_basis
-        delta = _rot_from_basis(rest_basis[0], rest_basis[1], tgt_basis[0], tgt_basis[1])
+        parent_wq = _q(self._wj(fa_jn).getQuat(self.actor)) # type: ignore
+        rest_wq = hand_rest.quat * parent_wq
+        r0 = _norm(rest_wq.xform(self._hand_basis_in_fk_local[side][0]))
+        r1 = _norm(rest_wq.xform(self._hand_basis_in_fk_local[side][1]))
+        if r0 is None or r1 is None:
+            return
 
-        parent_wq = _q(self._wj(fa_jn).getQuat(self.actor))
-        tgt_world = delta * hand_rest.quat
-        new_q = _q(parent_wq.conjugate()) * tgt_world
+        twist_axis_parent = _norm(self.arm_ctrls[side]["Forearm"].rest_dir_local) or Vec3(0, 0, 1)
+        palm_local = self._hand_basis_in_fk_local[side][2]
+        new_q = hand_rest.quat
+        best_score = -2.0
+        for cand_across in (tgt_basis[1], tgt_basis[1] * -1.0):
+            delta = _rot_from_basis(r0, r1, tgt_basis[0], cand_across)
+            full_q = rest_wq * delta * parent_wq.conjugate()
+            offset_q = hand_rest.quat.conjugate() * full_q
+            swing_q = _remove_twist_from_offset(offset_q, twist_axis_parent)
+            cand_q = hand_rest.quat * swing_q
+            cand_world_q = cand_q * parent_wq
+            cand_palm = _norm(cand_world_q.xform(palm_local))
+            score = cand_palm.dot(tgt_basis[2]) if cand_palm is not None else -1.0
+            if score > best_score:
+                best_score = score
+                new_q = cand_q
 
         # Temporal smoothing with outlier rejection
         prev = self._prev_hand_quats.get(side)
@@ -716,6 +736,8 @@ class CSVRigAnimator:
     ) -> None:
         fcs = self.finger_ctrls[side]["Thumb"]
         lm_pairs = FINGER_LANDMARKS["Thumb"]
+
+        # Collect capture segment directions.
         seg_dirs: list[Vec3] = []
         for si, ei in lm_pairs:
             sp, ep = hlms.get(si), hlms.get(ei)
@@ -726,35 +748,42 @@ class CSVRigAnimator:
                 return
             seg_dirs.append(d)
 
-        parent_wq = _q(self._wj(f"FK-Hand.{side}").getQuat(self.actor))
-        for seg_dir, ctrl in zip(seg_dirs, fcs):
-            cap_tgt = _world_to_basis(seg_dir, cap_basis)
-            cur_basis = _build_basis(
-                _norm(parent_wq.xform(_norm(ctrl.rest.quat.xform(ctrl.rest_dir_local)) or Vec3(1, 0, 0))) or Vec3(1, 0, 0),
-                _norm(parent_wq.xform(_norm(ctrl.rest.quat.xform(Vec3(0, 1, 0))) or Vec3(0, 1, 0))) or Vec3(0, 1, 0),
-            )
-            if cur_basis is None:
-                self._cur_quats[ctrl.joint_name] = _q(ctrl.rest.quat)
-                parent_wq = parent_wq * ctrl.rest.quat
-                continue
-            tgt_par = _norm(_basis_to_world(cap_tgt, cur_basis))
-            rest_fwd = _norm(ctrl.rest.quat.xform(Vec3(1, 0, 0)))
-            if rest_fwd is None or tgt_par is None:
-                self._cur_quats[ctrl.joint_name] = _q(ctrl.rest.quat)
-                parent_wq = parent_wq * ctrl.rest.quat
-                continue
+        # --- Base segment: free 3D rotation via hand-basis remap -----------
+        cur_basis = self._current_hand_basis(side)
+        hand_wq = _q(self._wj(f"FK-Hand.{side}").getQuat(self.actor)) # type: ignore
+        in_cap = _world_to_basis(seg_dirs[0], cap_basis)
+        tgt_base = _norm(_basis_to_world(in_cap, cur_basis))
+        if tgt_base is None:
+            return
+
+        ctrl0 = fcs[0]
+        tgt_par = _norm(hand_wq.conjugate().xform(tgt_base))
+        rest_fwd = _norm(ctrl0.rest.quat.xform(ctrl0.rest_dir_local))
+        if tgt_par is None or rest_fwd is None:
+            self._cur_quats[ctrl0.joint_name] = _q(ctrl0.rest.quat)
+        else:
             cross_ax = _norm(rest_fwd.cross(tgt_par))
             if cross_ax is None:
-                self._cur_quats[ctrl.joint_name] = _q(ctrl.rest.quat)
-                parent_wq = parent_wq * ctrl.rest.quat
-                continue
-            angle = math.acos(_clamp(rest_fwd.dot(tgt_par), -1.0, 1.0))
-            angle *= THUMB_POSE_STRENGTH
-            delta = Quat()
-            delta.setFromAxisAngleRad(angle, cross_ax)
-            new_q = ctrl.rest.quat * delta
-            self._cur_quats[ctrl.joint_name] = new_q
-            parent_wq = parent_wq * new_q
+                self._cur_quats[ctrl0.joint_name] = _q(ctrl0.rest.quat)
+            else:
+                angle = math.acos(_clamp(rest_fwd.dot(tgt_par), -1.0, 1.0))
+                angle *= THUMB_POSE_STRENGTH
+                delta = Quat()
+                delta.setFromAxisAngleRad(angle, cross_ax)
+                self._cur_quats[ctrl0.joint_name] = ctrl0.rest.quat * delta
+
+        # --- Distal segments: inter-segment angle (like _update_finger) ----
+        for seg_i in range(1, len(fcs)):
+            ctrl = fcs[seg_i]
+            prev_dir = seg_dirs[seg_i - 1]
+            cur_dir = seg_dirs[seg_i]
+            dot = _clamp(prev_dir.dot(cur_dir), -1.0, 1.0)
+            curl_angle = math.acos(dot)
+            curl_angle = min(curl_angle, MAX_FINGER_CURL_RADIANS)
+            curl_angle *= THUMB_POSE_STRENGTH
+            offset = Quat()
+            offset.setFromAxisAngleRad(curl_angle * ctrl.curl_sign, ctrl.curl_axis_local)
+            self._cur_quats[ctrl.joint_name] = ctrl.rest.quat * offset
 
     def _update_finger(
         self, side: str, fname: str, hlms: dict[int, Vec3],
@@ -829,6 +858,8 @@ class CSVRigAnimator:
         raw_torso = self._capture_torso(pose_lms)
         if raw_torso is not None:
             self._cur_torso = self._smooth_torso(raw_torso)
+            if self._ref_torso is None:
+                self._ref_torso = self._cur_torso
 
         # Arms
         for side in SIDES:

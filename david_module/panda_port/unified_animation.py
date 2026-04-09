@@ -276,6 +276,28 @@ def _rot_from_basis(rp: Vec3, rs: Vec3, tp: Vec3, ts: Vec3) -> Quat:
     return q
 
 
+def _remove_twist_from_offset(offset_q: Quat, twist_axis_parent: Vec3) -> Quat:
+    """Remove the twist component of an offset quaternion around a parent-space axis."""
+    axis = _norm(twist_axis_parent)
+    if axis is None:
+        return _q(offset_q)
+
+    projected = axis * (
+        offset_q.getI() * axis.x
+        + offset_q.getJ() * axis.y
+        + offset_q.getK() * axis.z
+    )
+    twist = Quat(offset_q.getR(), projected.x, projected.y, projected.z)
+    if twist.lengthSquared() <= EPSILON:
+        return _q(offset_q)
+    twist.normalize()
+    swing = offset_q * twist.conjugate()
+    if swing.lengthSquared() <= EPSILON:
+        return Quat.identQuat()
+    swing.normalize()
+    return swing
+
+
 # ---------------------------------------------------------------------------
 # Sign clip loader (unified for all PKL datasets)
 # ---------------------------------------------------------------------------
@@ -391,6 +413,7 @@ class UnifiedRigAnimator:
         self._prev_hand_quats: dict[str, Quat] = {}
         self._prev_torso: tuple[Vec3, Vec3, Vec3] | None = None
         self._cur_torso: tuple[Vec3, Vec3, Vec3] | None = None
+        self._ref_torso: tuple[Vec3, Vec3, Vec3] | None = None
         self._last_frame: int | None = None
 
         # Build rest-torso basis from the rig's default pose
@@ -404,7 +427,7 @@ class UnifiedRigAnimator:
             self._arm_rest_dirs[side] = self._arm_rest_directions(side)
             self._hand_rest_basis[side] = self._build_hand_rest_basis(side)
             # Store hand rest basis in FK-Hand's local frame
-            hand_init_wq = _q(self._wj(f"FK-Hand.{side}").getQuat(self.actor))
+            hand_init_wq = _q(self._wj(f"FK-Hand.{side}").getQuat(self.actor)) # type: ignore
             self._hand_basis_in_fk_local[side] = tuple(
                 _norm(hand_init_wq.conjugate().xform(ax)) or ax
                 for ax in self._hand_rest_basis[side]
@@ -446,6 +469,7 @@ class UnifiedRigAnimator:
         self._prev_hand_quats.clear()
         self._prev_torso = None
         self._cur_torso = None
+        self._ref_torso = None
         self._reset_pose()
         self._freeze_all()
         self.actor.update()
@@ -484,7 +508,7 @@ class UnifiedRigAnimator:
         if c is not None:
             return c
         lj = self._lj(name)
-        t = JointRestTransform(pos=_v(lj.getPos()), quat=_q(lj.getQuat()), scale=_v(lj.getScale()))
+        t = JointRestTransform(pos=_v(lj.getPos()), quat=_q(lj.getQuat()), scale=_v(lj.getScale()))  # type: ignore
         self._rest[name] = t
         return t
 
@@ -493,10 +517,10 @@ class UnifiedRigAnimator:
     # ------------------------------------------------------------------
 
     def _build_rest_torso(self) -> tuple[Vec3, Vec3, Vec3]:
-        ls = self._wj("HNG-Upperarm_Parent.L").getPos(self.actor)
-        rs = self._wj("HNG-Upperarm_Parent.R").getPos(self.actor)
-        lh = self._wj("HNG-Thigh.L").getPos(self.actor)
-        rh = self._wj("HNG-Thigh.R").getPos(self.actor)
+        ls = self._wj("HNG-Upperarm_Parent.L").getPos(self.actor) # type: ignore
+        rs = self._wj("HNG-Upperarm_Parent.R").getPos(self.actor) # type: ignore
+        lh = self._wj("HNG-Thigh.L").getPos(self.actor) # type: ignore
+        rh = self._wj("HNG-Thigh.R").getPos(self.actor) # type: ignore
         sc = (ls + rs) * 0.5
         hc = (lh + rh) * 0.5
         b = _build_basis(sc - hc, rs - ls)
@@ -505,7 +529,7 @@ class UnifiedRigAnimator:
     def _arm_parent_quat(self, side: str) -> Quat:
         name = f"FK-Upperarm.{side}"
         rest = self._rest_of(name)
-        wq = _q(self._wj(name).getQuat(self.actor))
+        wq = _q(self._wj(name).getQuat(self.actor)) # type: ignore
         return rest.quat.conjugate() * wq
 
     def _arm_rest_directions(self, side: str) -> dict[str, Vec3]:
@@ -513,16 +537,16 @@ class UnifiedRigAnimator:
         for seg, (jb, cb) in ARM_JOINTS.items():
             jn = f"{jb}.{side}"
             cn = f"{cb}.{side}"
-            d = _norm(self._wj(cn).getPos(self.actor) - self._wj(jn).getPos(self.actor))
+            d = _norm(self._wj(cn).getPos(self.actor) - self._wj(jn).getPos(self.actor)) # type: ignore
             dirs[seg] = d or Vec3(1, 0, 0)
         return dirs
 
     def _build_hand_rest_basis(self, side: str) -> tuple[Vec3, Vec3, Vec3]:
-        hp = self._wj(f"DEF-Hand.{side}").getPos(self.actor)
-        forward = self._wj(f"DEF-Middle1.{side}").getPos(self.actor) - hp
+        hp = self._wj(f"DEF-Hand.{side}").getPos(self.actor) # type: ignore
+        forward = self._wj(f"DEF-Middle1.{side}").getPos(self.actor) - hp # type: ignore
         across = (
-            self._wj(f"DEF-Pinky1.{side}").getPos(self.actor)
-            - self._wj(f"DEF-Index1.{side}").getPos(self.actor)
+            self._wj(f"DEF-Pinky1.{side}").getPos(self.actor) # type: ignore
+            - self._wj(f"DEF-Index1.{side}").getPos(self.actor) # type: ignore
         )
         b = _build_basis(forward, across)
         return b if b is not None else (Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1))
@@ -534,7 +558,7 @@ class UnifiedRigAnimator:
             cn = f"{cb}.{side}"
             rest = self._rest_of(jn)
             child_local = self._lj(cn)
-            rd = _norm(child_local.getPos()) or Vec3(0, 0, 1)
+            rd = _norm(child_local.getPos()) or Vec3(0, 0, 1) # type: ignore
             ctrls[seg] = ArmControl(joint_name=jn, rest=rest, rest_dir_local=rd)
         return ctrls
 
@@ -551,14 +575,14 @@ class UnifiedRigAnimator:
                 rest = self._rest_of(jn)
                 cn = cnames[i]
                 if cn is not None:
-                    rd = _norm(self._lj(cn).getPos()) or Vec3(0, 0, 1)
+                    rd = _norm(self._lj(cn).getPos()) or Vec3(0, 0, 1) # type: ignore
                 else:
                     # Terminal segment – infer direction from parent→this
                     parent_name = jnames[i - 1]
                     wj = self._wj(jn)
                     pj = self._wj(parent_name)
-                    wdir = _norm(wj.getPos(self.actor) - pj.getPos(self.actor))
-                    wq = wj.getQuat(self.actor)
+                    wdir = _norm(wj.getPos(self.actor) - pj.getPos(self.actor)) # type: ignore
+                    wq = wj.getQuat(self.actor) # type: ignore
                     rd = _norm(wq.conjugate().xform(wdir)) if wdir is not None else Vec3(0, 0, 1)
                     rd = rd or Vec3(0, 0, 1)
 
@@ -581,8 +605,8 @@ class UnifiedRigAnimator:
         palm_world = hand_basis[2]    # palm normal
 
         rest_dir_parent = _norm(rest.quat.xform(rest_dir_local))
-        wq = _q(self._wj(joint_name).getQuat(self.actor))
-        parent_wq = wq * rest.quat.conjugate()
+        wq = _q(self._wj(joint_name).getQuat(self.actor)) # type: ignore
+        parent_wq = rest.quat.conjugate() * wq
         across_parent = _norm(parent_wq.conjugate().xform(across_world))
         palm_parent = _norm(parent_wq.conjugate().xform(palm_world))
 
@@ -651,7 +675,7 @@ class UnifiedRigAnimator:
         return out or None
 
     def _frame_data(self, fi: int):
-        pts, conf = self.clip.frame_data(fi)
+        pts, conf = self.clip.frame_data(fi) # pyright: ignore[reportOptionalMemberAccess]
         pose = self._pose_lms(pts, conf)
         hands: dict[str, dict[int, Vec3]] = {}
         lh = self._hand_lms(pts, conf, LEFT_HAND_OFFSET)
@@ -711,9 +735,9 @@ class UnifiedRigAnimator:
     # ------------------------------------------------------------------
 
     def _update_arms(self, side: str, plms: dict[int, Vec3]) -> None:
-        if self._cur_torso is None:
+        if self._ref_torso is None:
             return
-        cap_torso = self._cur_torso
+        cap_torso = self._ref_torso
 
         si = POSE_LEFT_SHOULDER if side == "L" else POSE_RIGHT_SHOULDER
         ei = POSE_LEFT_ELBOW if side == "L" else POSE_RIGHT_ELBOW
@@ -807,7 +831,7 @@ class UnifiedRigAnimator:
         return stab
 
     def _current_hand_basis(self, side: str) -> tuple[Vec3, Vec3, Vec3]:
-        wq = _q(self._wj(f"FK-Hand.{side}").getQuat(self.actor))
+        wq = _q(self._wj(f"FK-Hand.{side}").getQuat(self.actor)) # type: ignore
         axes = tuple(
             _norm(wq.xform(al)) or aw
             for al, aw in zip(self._hand_basis_in_fk_local[side], self._hand_rest_basis[side])
@@ -838,10 +862,11 @@ class UnifiedRigAnimator:
         si = POSE_LEFT_SHOULDER if side == "L" else POSE_RIGHT_SHOULDER
         ei = POSE_LEFT_ELBOW if side == "L" else POSE_RIGHT_ELBOW
         wi = POSE_LEFT_WRIST if side == "L" else POSE_RIGHT_WRIST
-        s, e = plms.get(si), plms.get(ei)
-        # Prefer hand wrist landmark (index 0) for better confidence,
-        # fall back to pose wrist.
-        w = hlms.get(0) or plms.get(wi)
+        s, e, w = plms.get(si), plms.get(ei), plms.get(wi)
+        # Keep the capture forearm frame anchored to the same pose wrist used
+        # by the arm FK.  ASLLVD hand wrist(0) drifts significantly relative
+        # to the pose wrist and injects palm twist into the forearm basis,
+        # which shows up as left/right wrist asymmetry on mirrored signs.
         if s is None or e is None or w is None:
             return
         cap_fa_dir = _norm(w - e)
@@ -864,9 +889,9 @@ class UnifiedRigAnimator:
         hacr_local = Vec3(hacr_local.x, hacr_local.y, hacr_local.z * TORSO_DEPTH_SIGN)
 
         # --- rig forearm frame (after arm freeze) ---
-        rig_fa_pos = self._wj(f"FK-Forearm.{side}").getPos(self.actor)
-        rig_hand_pos = self._wj(f"FK-Hand.{side}").getPos(self.actor)
-        rig_ua_pos = self._wj(f"FK-Upperarm.{side}").getPos(self.actor)
+        rig_fa_pos = self._wj(f"FK-Forearm.{side}").getPos(self.actor)  # type: ignore
+        rig_hand_pos = self._wj(f"FK-Hand.{side}").getPos(self.actor)  # type: ignore
+        rig_ua_pos = self._wj(f"FK-Upperarm.{side}").getPos(self.actor)  # type: ignore
         rig_fa_dir = _norm(rig_hand_pos - rig_fa_pos)
         rig_ua_dir = _norm(rig_ua_pos - rig_fa_pos)
         if rig_fa_dir is None or rig_ua_dir is None:
@@ -878,18 +903,38 @@ class UnifiedRigAnimator:
         # Reconstruct hand axes in rig space
         rig_fwd = _norm(_basis_to_world(hfwd_local, rig_fa_basis))
         rig_acr = _norm(_basis_to_world(hacr_local, rig_fa_basis))
+        hpalm_local = _world_to_basis(cap_basis[2], cap_fa_basis)
+        hpalm_local = Vec3(hpalm_local.x, hpalm_local.y, hpalm_local.z * TORSO_DEPTH_SIGN)
+        rig_palm = _norm(_basis_to_world(hpalm_local, rig_fa_basis))
         if rig_fwd is None or rig_acr is None:
             return
 
-        # Standard delta rotation from rest to target
-        parent_wq = _q(self._wj(f"FK-Forearm.{side}").getQuat(self.actor))
+        # Solve the full hand basis, then remove only the twist around the
+        # forearm axis. This keeps the palm orientation while preventing the
+        # wrist mesh from rolling into a visibly distorted shape.
+        parent_wq = _q(self._wj(f"FK-Forearm.{side}").getQuat(self.actor))  # type: ignore
         rest_wq = hand_rest.quat * parent_wq
         r0 = _norm(rest_wq.xform(self._hand_basis_in_fk_local[side][0]))
         r1 = _norm(rest_wq.xform(self._hand_basis_in_fk_local[side][1]))
         if r0 is None or r1 is None:
             return
-        delta = _rot_from_basis(r0, r1, rig_fwd, rig_acr)
-        new_q = delta * hand_rest.quat
+
+        twist_axis_parent = _norm(self.arm_ctrls[side]["Forearm"].rest_dir_local) or Vec3(0, 0, 1)
+        palm_local = self._hand_basis_in_fk_local[side][2]
+        new_q = hand_rest.quat
+        best_score = -2.0
+        for cand_acr in (rig_acr, rig_acr * -1.0):
+            delta = _rot_from_basis(r0, r1, rig_fwd, cand_acr)
+            full_q = rest_wq * delta * parent_wq.conjugate()
+            offset_q = hand_rest.quat.conjugate() * full_q
+            swing_q = _remove_twist_from_offset(offset_q, twist_axis_parent)
+            cand_q = hand_rest.quat * swing_q
+            cand_world_q = cand_q * parent_wq
+            cand_palm = _norm(cand_world_q.xform(palm_local))
+            score = cand_palm.dot(rig_palm) if cand_palm is not None and rig_palm is not None else -1.0
+            if score > best_score:
+                best_score = score
+                new_q = cand_q
 
         # Temporal smoothing (EMA with outlier rejection)
         prev = self._prev_hand_quats.get(side)
@@ -927,7 +972,7 @@ class UnifiedRigAnimator:
         self, side: str, hlms: dict[int, Vec3], cap_basis: tuple[Vec3, Vec3, Vec3],
     ) -> None:
         cur_basis = self._current_hand_basis(side)
-        hand_wq = _q(self._wj(f"FK-Hand.{side}").getQuat(self.actor))
+        hand_wq = _q(self._wj(f"FK-Hand.{side}").getQuat(self.actor))  # type: ignore
 
         target_dirs: list[Vec3] = []
         for start_i, end_i in FINGER_LANDMARKS["Thumb"]:
@@ -945,29 +990,49 @@ class UnifiedRigAnimator:
             target_dirs.append(remap)
 
         parent_wq = hand_wq
-        for ctrl, tgt_world in zip(self.finger_ctrls[side]["Thumb"], target_dirs):
+        for seg_i, (ctrl, tgt_world) in enumerate(zip(self.finger_ctrls[side]["Thumb"], target_dirs)):
             tgt_par = _norm(parent_wq.conjugate().xform(tgt_world))
             if tgt_par is None:
                 self._cur_quats[ctrl.joint_name] = _q(ctrl.rest.quat)
-                parent_wq = parent_wq * ctrl.rest.quat
+                parent_wq = ctrl.rest.quat * parent_wq
                 continue
             rest_fwd = _norm(ctrl.rest.quat.xform(Vec3(1, 0, 0)))
             if rest_fwd is None:
                 self._cur_quats[ctrl.joint_name] = _q(ctrl.rest.quat)
-                parent_wq = parent_wq * ctrl.rest.quat
+                parent_wq = ctrl.rest.quat * parent_wq
                 continue
+
+            # The thumb base needs broad freedom, but the distal segments
+            # should hinge around the detected curl axis rather than taking
+            # an unconstrained shortest arc that can flip backward on one side.
+            delta = Quat()
+            if seg_i > 0:
+                bend_ax = _norm(ctrl.rest.quat.xform(ctrl.curl_axis_local))
+                if bend_ax is not None:
+                    rest_proj = _norm(rest_fwd - bend_ax * rest_fwd.dot(bend_ax))
+                    tgt_proj = _norm(tgt_par - bend_ax * tgt_par.dot(bend_ax))
+                    if rest_proj is not None and tgt_proj is not None:
+                        angle = math.acos(_clamp(rest_proj.dot(tgt_proj), -1.0, 1.0))
+                        if rest_proj.cross(tgt_proj).dot(bend_ax) < 0.0:
+                            angle = -angle
+                        angle *= THUMB_POSE_STRENGTH * ctrl.curl_sign
+                        delta.setFromAxisAngleRad(angle, bend_ax)
+                        new_q = ctrl.rest.quat * delta
+                        self._cur_quats[ctrl.joint_name] = new_q
+                        parent_wq = new_q * parent_wq
+                        continue
+
             cross_ax = _norm(rest_fwd.cross(tgt_par))
             if cross_ax is None:
                 self._cur_quats[ctrl.joint_name] = _q(ctrl.rest.quat)
-                parent_wq = parent_wq * ctrl.rest.quat
+                parent_wq = ctrl.rest.quat * parent_wq
                 continue
             angle = math.acos(_clamp(rest_fwd.dot(tgt_par), -1.0, 1.0))
             angle *= THUMB_POSE_STRENGTH
-            delta = Quat()
             delta.setFromAxisAngleRad(angle, cross_ax)
             new_q = ctrl.rest.quat * delta
             self._cur_quats[ctrl.joint_name] = new_q
-            parent_wq = parent_wq * new_q
+            parent_wq = new_q * parent_wq
 
     def _update_finger(
         self, side: str, fname: str, hlms: dict[int, Vec3],
@@ -1052,6 +1117,7 @@ class UnifiedRigAnimator:
             self._prev_arm_dirs.clear()
             self._prev_torso = None
             self._cur_torso = None
+            self._ref_torso = None
             self._reset_pose()
             self._freeze_all()
             self.actor.update()
@@ -1065,6 +1131,11 @@ class UnifiedRigAnimator:
         raw_torso = self._capture_torso(pose_lms)
         if raw_torso is not None:
             self._cur_torso = self._smooth_torso(raw_torso)
+            # Lock the reference torso from the first valid frame so that
+            # noisy per-frame depth rotation does not drag both arms in
+            # unison (image-normalised ASLLVD Z is unreliable).
+            if self._ref_torso is None:
+                self._ref_torso = self._cur_torso
 
         # --- Arms ---
         for side in SIDES:

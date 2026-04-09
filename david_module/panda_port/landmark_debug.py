@@ -189,6 +189,9 @@ class LandmarkVisualizer(DirectObject):
         ) or (Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1))
         self._rig_shoulder_dist = (self._rig_rs - self._rig_ls).length()
 
+        # Reference capture torso (set once from first 3D frame, not per-frame)
+        self._ref_cap_torso: tuple[Vec3, Vec3, Vec3] | None = None
+
         # Rig bone lengths (rest pose: shoulder→elbow, elbow→wrist)
         self._rig_bones: dict[str, dict[str, float]] = {}
         for side in ("L", "R"):
@@ -253,6 +256,7 @@ class LandmarkVisualizer(DirectObject):
         # enter new mode
         if self.mode == MODE_3D:
             self._3d_root.show()
+            self._ref_cap_torso = None  # re-calibrate from next frame
         elif self.mode == MODE_2D:
             self._2d_root.show()
             self._enter_2d_camera()
@@ -493,6 +497,11 @@ class LandmarkVisualizer(DirectObject):
         if tb is None:
             return
         cap_sc, cap_torso, cap_sd = tb
+        # Lock the reference torso from the first valid frame to avoid
+        # noisy monocular depth rotating both arms in unison.
+        if self._ref_cap_torso is None:
+            self._ref_cap_torso = cap_torso
+        cap_torso = self._ref_cap_torso
         scale = self._rig_shoulder_dist / cap_sd
 
         ls = LineSegs("lm-debug-3d")
