@@ -1,6 +1,29 @@
+# Virtual environments
 venv/
 env/
 mp_env/
 .venv/
-.env.*
+.env/
 myenv/
+
+# Datasets
+dataSet/kily-dataset/*
+dataSet/david-dataset/*
+
+# Build output (setup.sh rebuilds these)
+dist/
+build/
+*.spec
+
+# Processing output
+savedVideoPoints/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Mac junk
+.DS_Store
+
+# VS Code
+*.code-workspace
