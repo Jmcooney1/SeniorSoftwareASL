@@ -370,9 +370,9 @@ def create_sign_hud(world, animator):
     )
 
 
-def create_csv_animator(actor: Actor, csv_path):
-    """Create a CSV-based animator for *csv_path*."""
+def create_animator(actor: Actor, csv_path=None):
+    """Create a CSVRigAnimator, optionally pre-loaded with *csv_path*."""
     from animation import CSVRigAnimator
     from pathlib import Path
 
-    return CSVRigAnimator(actor, csv_path=Path(csv_path))
+    return CSVRigAnimator(actor, csv_path=Path(csv_path) if csv_path else None)

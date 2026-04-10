@@ -4,13 +4,26 @@ import subprocess
 import importlib
 
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QLabel, QPushButton, QMessageBox, QHBoxLayout, QSizePolicy
+    QWidget, QVBoxLayout, QLabel, QPushButton, QMessageBox, QHBoxLayout,
+    QSizePolicy, QComboBox,
 )
 from PySide6.QtCore import QTimer, Qt
 
 
 def get_tab() -> QWidget:
     return DavidModuleTab()
+
+
+def _available_signs():
+    """Return list of (name, Path) from the animation module."""
+    pkg_dir = os.path.join(os.path.dirname(__file__), "panda_port")
+    if pkg_dir not in sys.path:
+        sys.path.insert(0, pkg_dir)
+    try:
+        from animation import list_csv_signs
+        return list_csv_signs()
+    except Exception:
+        return []
 
 
 class DavidModuleTab(QWidget):
@@ -26,6 +39,7 @@ class DavidModuleTab(QWidget):
         self.proc = None
         self.panda_app = None
         self.timer = None
+        self._signs: list = []
         self._build_ui()
 
     def _build_ui(self):
@@ -35,6 +49,16 @@ class DavidModuleTab(QWidget):
         layout.addWidget(header)
 
         btn_row = QHBoxLayout()
+        sign_label = QLabel("Sign:")
+        sign_label.setStyleSheet("font-size: 13px; font-weight: bold;")
+        self.sign_combo = QComboBox()
+        self.sign_combo.setMinimumWidth(240)
+        self._signs = _available_signs()
+        self.sign_combo.addItems([name for name, _ in self._signs])
+        if self._signs:
+            self.sign_combo.setCurrentIndex(0)
+        btn_row.addWidget(sign_label)
+        btn_row.addWidget(self.sign_combo, 1)
         self.launch_btn = QPushButton("Open Panda (Popout)")
         self.launch_btn.clicked.connect(self.open_popout)
         self.embed_btn = QPushButton("Start Embedded (Slow)")
@@ -55,19 +79,38 @@ class DavidModuleTab(QWidget):
         # give the embed container stretch so it takes available space
         layout.addWidget(self.embed_container, 1)
 
+    def _selected_csv_path(self):
+        idx = self.sign_combo.currentIndex()
+        if 0 <= idx < len(self._signs):
+            return str(self._signs[idx][1])
+        return None
+
     def open_popout(self):
         if self.proc is not None and getattr(self.proc, "poll", lambda: 1)() is None:
             QMessageBox.information(self, "Already Running", "Panda process already running.")
             return
 
+        csv_path = self._selected_csv_path()
+        if csv_path is None:
+            QMessageBox.warning(self, "No Sign", "No sign selected.")
+            return
+
         script = os.path.join(os.path.dirname(__file__), "panda_port", "run_panda.py")
         try:
-            self.proc = subprocess.Popen([sys.executable, script], cwd=os.path.dirname(script))
-            self.status.setText("Panda launched (popout).")
+            self.proc = subprocess.Popen(
+                [sys.executable, script, csv_path],
+                cwd=os.path.dirname(script),
+            )
+            self.status.setText(f"Panda launched (popout) — {self.sign_combo.currentText()}")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to launch Panda: {e}")
 
     def start_embedded(self):
+        csv_path = self._selected_csv_path()
+        if csv_path is None:
+            QMessageBox.warning(self, "No Sign", "No sign selected.")
+            return
+
         self.status.setText("Starting embedded (QPanda3D)...")
         pkg_dir = os.path.join(os.path.dirname(__file__), "panda_port")
         if pkg_dir not in sys.path:
@@ -112,7 +155,11 @@ class DavidModuleTab(QWidget):
                     pass
 
             # Create the QPanda3D world and widget
-            world = qpanda_adapter.QPandaPandaWorld(width=self.embed_container.width() or 1024, height=self.embed_container.height() or 768)
+            world = qpanda_adapter.QPandaPandaWorld(
+                width=self.embed_container.width() or 1024,
+                height=self.embed_container.height() or 768,
+                csv_path=csv_path,
+            )
             # QPanda3D expects the actual Panda3DWorld instance; adapter stores it on _world
             real_world = getattr(world, "_world", world)
             panda_widget = QPanda3DWidget(real_world)

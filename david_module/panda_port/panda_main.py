@@ -14,7 +14,7 @@ from landmark_debug import LandmarkVisualizer
 
 
 class PandaApp(ShowBase):
-    def __init__(self) -> None:
+    def __init__(self, csv_path: str | None = None) -> None:
         loadPrcFileData("", "win-size 1200 1000")
         
         super().__init__()
@@ -39,8 +39,23 @@ class PandaApp(ShowBase):
             self.camera_controller = None
 
         self.landmark_animator = create_animator(self.character)
-        self.sign_hud = create_sign_hud(self, self.landmark_animator)
         self.taskMgr.add(self.landmark_animator.update, "landmark-rig-animator")
+
+        # Load the requested sign (or fall back to the first available)
+        try:
+            from animation import list_csv_signs, CSVSignClip
+            from pathlib import Path
+            target = Path(csv_path) if csv_path else None
+            if target is None:
+                signs = list_csv_signs()
+                if signs:
+                    target = signs[0][1]
+            if target is not None:
+                self.landmark_animator.set_clip(CSVSignClip(target))
+        except Exception:
+            pass
+
+        self.sign_hud = create_sign_hud(self, self.landmark_animator)
 
         # Landmark debug overlay (toggle with V)
         self.debug_viz = LandmarkVisualizer(

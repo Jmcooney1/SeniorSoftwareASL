@@ -9,7 +9,8 @@ from panda_main import PandaApp
 
 
 def main():
-    app = PandaApp()
+    csv_path = sys.argv[1] if len(sys.argv) > 1 else None
+    app = PandaApp(csv_path=csv_path)
     app.run()
 
 

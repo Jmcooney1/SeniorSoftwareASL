@@ -27,7 +27,7 @@ class QPandaPandaWorld:
             raise RuntimeError("QPanda3D is not installed")
         return super().__new__(cls)
 
-    def __init__(self, width: int = 1920, height: int = 1080):
+    def __init__(self, width: int = 1920, height: int = 1080, csv_path: str | None = None):
         # Dynamically create a subclass so static type checkers don't fail
         class _Impl(Panda3DWorld):
             pass
@@ -52,8 +52,23 @@ class QPandaPandaWorld:
             self.camera_controller = None
 
         self.landmark_animator = create_animator(self.character)
-        self.sign_hud = create_sign_hud(self._world, self.landmark_animator)
         self._world.taskMgr.add(self.landmark_animator.update, "landmark-rig-animator")
+
+        # Load the requested sign (or fall back to the first available)
+        try:
+            from animation import list_csv_signs, CSVSignClip
+            from pathlib import Path
+            target = Path(csv_path) if csv_path else None
+            if target is None:
+                signs = list_csv_signs()
+                if signs:
+                    target = signs[0][1]
+            if target is not None:
+                self.landmark_animator.set_clip(CSVSignClip(target))
+        except Exception:
+            pass
+
+        self.sign_hud = create_sign_hud(self._world, self.landmark_animator)
         try:
             self.character_pose_controller = create_character_pose_controller(
                 self._world,

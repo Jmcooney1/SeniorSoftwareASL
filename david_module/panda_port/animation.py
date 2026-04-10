@@ -82,7 +82,7 @@ POSE_LEFT_HIP = 23
 POSE_RIGHT_HIP = 24
 
 # CSV catalogue
-CSV_DIR = (Path(__file__).resolve().parent / ".." / ".." / "dataSet" / "david-dataset" / "Landmarks" / "world-pose").resolve()
+CSV_DIR = (Path(__file__).resolve().parent.parent.parent / "dataSet" / "david-dataset" / "Landmarks" / "world-pose").resolve()
 CSV_FILENAME_RE = re.compile(r"^SignSchool\s+(.+?)\s+\[(\d+)x(\d+)\]\.csv$")
 DEFAULT_CSV_FPS = 30.0
 

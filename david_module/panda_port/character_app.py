@@ -121,9 +121,9 @@ def _launch_csv(csv_path: Path) -> None:
     from panda3d.core import loadPrcFileData
 
     from panda_core import (
+        create_animator,
         create_camera_controller,
         create_character_pose_controller,
-        create_csv_animator,
         create_sign_hud,
         frame_camera,
         load_actor,
@@ -152,7 +152,7 @@ def _launch_csv(csv_path: Path) -> None:
     except Exception:
         camera_ctrl = None
 
-    animator = create_csv_animator(character, csv_path)
+    animator = create_animator(character, csv_path)
     hud = create_sign_hud(base, animator)
     base.taskMgr.add(animator.update, "csv-rig-animator")
 
