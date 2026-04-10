@@ -35,7 +35,7 @@ VIDEO_INDEX  = os.path.join(DB_PATH, "wlasl_class_list.txt")
 
 def get_tab():
     """Called by the root launcher — returns this module's tab content."""
-    from PyQt6.QtWidgets import QWidget
+    from PySide6.QtWidgets import QWidget
     # skeleton_translation.py defines the full UI as a QWidget subclass.
     # We just import and return it — no QMainWindow, no new window.
     from kily_module.skeleton_translation import TranslatorWidget

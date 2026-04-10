@@ -9,12 +9,12 @@ import sys
 import random
 import io
 
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QWidget, QTabWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QMessageBox, QSizePolicy
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
-from PyQt6.QtGui import QPixmap, QImage
+from PySide6.QtCore import Qt, QThread, Signal, QTimer
+from PySide6.QtGui import QPixmap, QImage
 
 # ── Path resolution ───────────────────────────────────────────────────────────
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -304,8 +304,8 @@ class QuizTab(QWidget):
 #  Face Mask tab
 # ════════════════════════════════════════════════════════════════════════════
 class FaceMaskThread(QThread):
-    error    = pyqtSignal(str)
-    finished = pyqtSignal()
+    error    = Signal(str)
+    finished = Signal()
 
     def run(self):
         try:

@@ -3,13 +3,13 @@ import os
 import json
 import importlib
 
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QStackedWidget, QTabWidget, QStackedWidget, QTabWidget,
     QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QLineEdit, QFileDialog, QFrame, QMessageBox
 )
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QFont
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QFont
 
 # ── Config ───────────────────────────────────────────────────────────────────
 ROOT_DIR    = os.path.dirname(os.path.abspath(__file__))

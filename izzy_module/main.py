@@ -3,19 +3,19 @@ google_module/main.py
 Exposes get_tab() -> QWidget for the root launcher.
 Contains two sub-tabs: Live Predictor and Motion Trainer.
 """
+
 import os
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QTabWidget
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QTabWidget
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 def get_tab() -> QWidget:
-    """Called by the root launcher — returns this module's tab content."""
-    from izzy_module.predictor import PredictorWidget
-    from izzy_module.trainer   import TrainerWidget
+    from .predictor import PredictorWidget  # ← relative import (was google_module.predictor)
+    from .trainer import TrainerWidget       # ← relative import (was google_module.trainer)
 
     wrapper = QWidget()
-    layout  = QVBoxLayout(wrapper)
+    layout = QVBoxLayout(wrapper)
     layout.setContentsMargins(0, 0, 0, 0)
     layout.setSpacing(0)
 
@@ -46,7 +46,7 @@ def get_tab() -> QWidget:
     """)
 
     tabs.addTab(PredictorWidget(), "🤖  Live Predictor")
-    tabs.addTab(TrainerWidget(),   "🎯  Motion Trainer")
+    tabs.addTab(TrainerWidget(), "🎯  Motion Trainer")
 
     layout.addWidget(tabs)
     return wrapper

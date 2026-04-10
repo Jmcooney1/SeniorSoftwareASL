@@ -5,6 +5,7 @@ mp_env/
 .venv/
 .env/
 myenv/
+pySideEnv/
 
 # Dataset (too large for git)
 dataSet/kily_dataset/*

@@ -1,5 +1,5 @@
 {
   "venvPath": ".",
-  "venv": "myenv",
+  "venv": "pySideEnv",
   "extraPaths": ["./googleMedaPipe"]
 }

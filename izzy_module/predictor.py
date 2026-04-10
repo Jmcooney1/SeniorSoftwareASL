@@ -2,11 +2,11 @@ import os
 import cv2
 import numpy as np
 import mediapipe as mp
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QPushButton
 )
-from PyQt6.QtCore import QTimer, Qt
-from PyQt6.QtGui import QImage, QPixmap
+from PySide6.QtCore import QTimer, Qt
+from PySide6.QtGui import QImage, QPixmap
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -184,7 +184,6 @@ class PredictorWidget(QWidget):
                     top_score = score
                     top_name  = label.split("_")[0].upper()
 
-        # Update UI
         self.score_label.setText(f"Match Confidence: {int(top_score * 100)}%  ({top_name})")
 
         if top_score > self.THRESHOLD:
@@ -199,11 +198,13 @@ class PredictorWidget(QWidget):
             )
 
         h, w, ch = frame.shape
-        qimg = QImage(frame.data, w, h, ch * w, QImage.Format.Format_BGR888)
+        bytes_per_line = ch * w
+        qimg = QImage(frame.data, w, h, bytes_per_line, QImage.Format.Format_BGR888)
         self.feed.setPixmap(
             QPixmap.fromImage(qimg).scaled(
                 self.feed.size(),
-                Qt.AspectRatioMode.KeepAspectRatio
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation  # ← required in PySide6
             )
         )
 

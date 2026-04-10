@@ -3,12 +3,12 @@ import time
 import cv2
 import numpy as np
 import mediapipe as mp
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QLineEdit, QFrame, QMessageBox
 )
-from PyQt6.QtCore import QTimer, Qt
-from PyQt6.QtGui import QImage, QPixmap
+from PySide6.QtCore import QTimer, Qt
+from PySide6.QtGui import QImage, QPixmap
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -242,11 +242,13 @@ class TrainerWidget(QWidget):
                 self._show_review_screen()
 
         h, w, ch = frame.shape
-        qimg = QImage(frame.data, w, h, ch * w, QImage.Format.Format_BGR888)
+        bytes_per_line = ch * w
+        qimg = QImage(frame.data, w, h, bytes_per_line, QImage.Format.Format_BGR888)
         self.feed.setPixmap(
             QPixmap.fromImage(qimg).scaled(
                 self.feed.size(),
-                Qt.AspectRatioMode.KeepAspectRatio
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation  # ← required in PySide6
             )
         )
 
@@ -266,7 +268,9 @@ class TrainerWidget(QWidget):
 
     # ── Review / save / discard ───────────────────────────────────────────────
     def _show_review_screen(self):
-        self._stop_camera()
+        # Pause the timer but keep cap alive so feed holds the last frame
+        self.timer.stop()
+        self.control_widget.hide()
         self.decision_widget.show()
 
     def _save_data(self):
@@ -316,7 +320,13 @@ class TrainerWidget(QWidget):
         self.decision_widget.hide()
         self.control_widget.show()
         self.name_input.setEnabled(True)
-        self._toggle_camera()
+        self.history = {"left": None, "right": None}
+        self.sequence = []
+        # Only restart camera if it was already released; avoid double-start
+        if self.cap is None:
+            self._toggle_camera()
+        else:
+            self.timer.start(30)
 
     # ── Cleanup ──────────────────────────────────────────────────────────────
     def hideEvent(self, event):
