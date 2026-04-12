@@ -366,8 +366,14 @@ def create_sign_hud(world, animator):
         align=TextNode.ALeft,
         fg=(0.96, 0.97, 0.99, 1.0),
         bg=(0.08, 0.1, 0.14, 0.78),
-        mayChange=False,
+        mayChange=True,
     )
+
+
+def update_sign_hud(hud, animator) -> None:
+    """Refresh the on-screen sign label after a clip swap."""
+    if hud is not None:
+        hud.setText(_sign_label_text(animator))
 
 
 def create_animator(actor: Actor, csv_path=None):

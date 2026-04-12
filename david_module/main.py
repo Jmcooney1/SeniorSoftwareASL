@@ -1,13 +1,14 @@
 import os
 import sys
 import subprocess
-import importlib
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QPushButton, QMessageBox, QHBoxLayout,
     QSizePolicy, QComboBox,
 )
-from PySide6.QtCore import QTimer, Qt
+from PySide6.QtCore import Qt
+
+from david_module.sign_player import SignPlayerWidget
 
 
 def get_tab() -> QWidget:
@@ -16,11 +17,8 @@ def get_tab() -> QWidget:
 
 def _available_signs():
     """Return list of (name, Path) from the animation module."""
-    pkg_dir = os.path.join(os.path.dirname(__file__), "panda_port")
-    if pkg_dir not in sys.path:
-        sys.path.insert(0, pkg_dir)
     try:
-        from animation import list_csv_signs
+        from david_module.panda_port.animation import list_csv_signs
         return list_csv_signs()
     except Exception:
         return []
@@ -37,8 +35,6 @@ class DavidModuleTab(QWidget):
     def __init__(self):
         super().__init__()
         self.proc = None
-        self.panda_app = None
-        self.timer = None
         self._signs: list = []
         self._build_ui()
 
@@ -53,6 +49,8 @@ class DavidModuleTab(QWidget):
         sign_label.setStyleSheet("font-size: 13px; font-weight: bold;")
         self.sign_combo = QComboBox()
         self.sign_combo.setMinimumWidth(240)
+        self.sign_combo.setMaxVisibleItems(20)
+        self.sign_combo.view().setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self._signs = _available_signs()
         self.sign_combo.addItems([name for name, _ in self._signs])
         if self._signs:
@@ -70,14 +68,9 @@ class DavidModuleTab(QWidget):
         self.status = QLabel("")
         layout.addWidget(self.status)
 
-        # Container for Panda widget
-        self.embed_container = QWidget()
-        self.embed_container.setMinimumHeight(720)
-        self.embed_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self._embed_layout = QVBoxLayout(self.embed_container)
-        self._embed_layout.setContentsMargins(0, 0, 0, 0)
-        # give the embed container stretch so it takes available space
-        layout.addWidget(self.embed_container, 1)
+        # Reusable embedded player
+        self.player = SignPlayerWidget()
+        layout.addWidget(self.player, 1)
 
     def _selected_csv_path(self):
         idx = self.sign_combo.currentIndex()
@@ -111,104 +104,16 @@ class DavidModuleTab(QWidget):
             QMessageBox.warning(self, "No Sign", "No sign selected.")
             return
 
-        self.status.setText("Starting embedded (QPanda3D)...")
-        pkg_dir = os.path.join(os.path.dirname(__file__), "panda_port")
-        if pkg_dir not in sys.path:
-            sys.path.insert(0, pkg_dir)
-
-        try:
-            import traceback, subprocess, sys as _sys
-            from QPanda3D.QPanda3DWidget import QPanda3DWidget
-        except Exception as exc:
-            # Gather diagnostic information to help resolve environment issues
-            import traceback as _tb
-            tb = _tb.format_exc()
-            try:
-                pip_check = subprocess.run([_sys.executable, "-m", "pip", "show", "QPanda3D"], capture_output=True, text=True, timeout=5)
-                pip_out = pip_check.stdout.strip() or pip_check.stderr.strip()
-            except Exception as pip_exc:
-                pip_out = f"pip check failed: {pip_exc}"
-
-            msg = (
-                f"Failed to import QPanda3D: {exc}\n\n"
-                f"Python executable: {_sys.executable}\n"
-                f"pip show QPanda3D output:\n{pip_out}\n\n"
-                f"Traceback:\n{tb}"
-            )
-            QMessageBox.critical(self, "QPanda3D Import Error", msg)
-            self.status.setText("QPanda3D import failed — see dialog for details.")
-            return
-
-        try:
-            import qpanda_adapter
-        except Exception as e:
-            QMessageBox.critical(self, "Adapter Error", f"Failed to import embed adapter: {e}")
-            return
-
-        try:
-            # Remove any existing embedded widget
-            if getattr(self, "panda_widget", None) is not None:
-                try:
-                    self._embed_layout.removeWidget(self.panda_widget)
-                    self.panda_widget.deleteLater()
-                except Exception:
-                    pass
-
-            # Create the QPanda3D world and widget
-            world = qpanda_adapter.QPandaPandaWorld(
-                width=self.embed_container.width() or 1024,
-                height=self.embed_container.height() or 768,
-                csv_path=csv_path,
-            )
-            # QPanda3D expects the actual Panda3DWorld instance; adapter stores it on _world
-            real_world = getattr(world, "_world", world)
-            panda_widget = QPanda3DWidget(real_world)
-            self._embed_layout.addWidget(panda_widget)
-            self.panda_widget = panda_widget
-            self.status.setText("Embedded Panda started.")
-            self.embed_btn.setEnabled(False)
-        except Exception as e:
-            QMessageBox.critical(self, "Embedded start failed", str(e))
-
-    def _step_panda(self):
-        if self.panda_app is not None:
-            try:
-                # Advance Panda's global clock so task.time advances correctly
-                try:
-                    from panda3d.core import ClockObject
-                    ClockObject.getGlobalClock().tick()
-                except Exception:
-                    pass
-
-                # Step the Panda task manager and request a render
-                try:
-                    self.panda_app.taskMgr.step()
-                except Exception:
-                    pass
-
-                try:
-                    # Render a frame so the visuals update when embedding
-                    if hasattr(self.panda_app, "graphicsEngine"):
-                        try:
-                            self.panda_app.graphicsEngine.renderFrame()
-                        except Exception:
-                            pass
-                except Exception:
-                    pass
-            except Exception:
-                # Ignore stepping errors — embedding is experimental
-                pass
+        self.player.play(csv_path)
+        if self.player.is_running:
+            self.status.setText(f"Embedded — {self.sign_combo.currentText()}")
+        else:
+            self.status.setText("Embedded start failed — see player area.")
 
     def closeEvent(self, event):
-        # Stop any running popout process
         try:
             if self.proc is not None:
                 self.proc.terminate()
-        except Exception:
-            pass
-        try:
-            if self.timer is not None:
-                self.timer.stop()
         except Exception:
             pass
         return super().closeEvent(event)
