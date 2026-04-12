@@ -3,28 +3,40 @@ import sys
 import random
 
 from PyQt6.QtWidgets import (
-    QApplication, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLabel, QMessageBox, QSizePolicy, QFrame,
-    QStackedWidget
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout,
+    QPushButton, QLabel, QMessageBox
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPixmap
+
+from googleMedaPipe import motion_acc_test, accuracy_test # Ensure this is in the same directory or properly imported
 
 class HangmanTab(QWidget):
     def __init__(self):
         super().__init__()
 
         self.word_list = ["BIRD", "CAT", "HELLO", "SILLY GOOSE"]
-        self.max_attempts = 10
+        self.max_attempts = 8  # Updated to match 8 stages
 
         self.current_word = ""
         self.guessed_letters = set()
         self.attempts_left = self.max_attempts
         self.letter_buttons = {}
 
+        # Load all 9 hangman images (stage 0–8)
+        self.hangman_images = []
+        for i in range(9):
+            path = os.path.join(os.path.dirname(__file__), "hangman_png", f"hangman_{i}.png")
+            self.hangman_images.append(QPixmap(path))
+
         main_layout = QVBoxLayout(self)
         main_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         main_layout.setSpacing(20)
+
+        # Hangman image display
+        self.hangman_label = QLabel()
+        self.hangman_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        main_layout.addWidget(self.hangman_label)
 
         self.word_label = QLabel("Word: ")
         self.word_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -48,6 +60,18 @@ class HangmanTab(QWidget):
 
         self.reset_game()
 
+    def update_hangman_image(self):
+        # Stage = how many wrong guesses have been made
+        stage = self.max_attempts - self.attempts_left
+        stage = max(0, min(stage, 8))  # Clamp between 0 and 8
+        self.hangman_label.setPixmap(
+            self.hangman_images[stage].scaled(
+                300, 350,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+        )
+
     def reset_game(self):
         self.current_word = random.choice(self.word_list)
         self.guessed_letters = set()
@@ -57,6 +81,7 @@ class HangmanTab(QWidget):
             button.setEnabled(True)
 
         self.update_word_display()
+        self.update_hangman_image()
         self.attempts_label.setText(f"Attempts left: {self.attempts_left}")
 
     def update_word_display(self):
@@ -79,6 +104,7 @@ class HangmanTab(QWidget):
 
         if letter not in self.current_word:
             self.attempts_left -= 1
+            self.update_hangman_image()  # Only update image on wrong guess
 
         self.update_word_display()
         self.attempts_label.setText(f"Attempts left: {self.attempts_left}")
