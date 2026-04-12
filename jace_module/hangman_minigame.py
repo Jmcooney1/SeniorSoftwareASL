@@ -1,6 +1,7 @@
 import os
 import sys
 import random
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout,
@@ -9,7 +10,8 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPixmap
 
-from googleMedaPipe import motion_acc_test, accuracy_test # Ensure this is in the same directory or properly imported
+from googleMedaPipe.motion_acc_test import motion_acc_test
+from googleMedaPipe.accuracy_test import accuracy_test
 
 class HangmanTab(QWidget):
     def __init__(self):
@@ -50,6 +52,13 @@ class HangmanTab(QWidget):
         letters_layout = QHBoxLayout()
         letters_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         main_layout.addLayout(letters_layout)
+
+        button = QPushButton("Static Letter Accuracy Test")
+        buttonMotion = QPushButton("Motion Accuracy Test")
+        button.clicked.connect(self.motion_acc_test)
+        buttonMotion.clicked.connect(self.accuracy_test)
+        main_layout.addWidget(button)
+        main_layout.addWidget(buttonMotion)
 
         for letter in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
             button = QPushButton(letter)
