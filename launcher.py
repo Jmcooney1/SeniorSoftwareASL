@@ -23,10 +23,10 @@ os.makedirs(SAVE_DIR, exist_ok=True)
 # ── Modules ───────────────────────────────────────────────────────────────────
 MODULES = [
     {
-        "folder": "google_module",
-        "name": "ASL Recogniser",
-        "emoji": "🤖",
-        "description": "Real-time hand tracking and sign recognition using MediaPipe.",
+        "folder": "david_module",
+        "name": "Animation",
+        "emoji": "🎬",
+        "description": "Create animated ASL signs with our interactive tool.",
     },
     {
         "folder": "izzy_module",
@@ -40,6 +40,7 @@ MODULES = [
         "emoji": "📝",
         "description": "Test your ASL knowledge with an interactive translation quiz.",
     },
+    
 ]
 
 
