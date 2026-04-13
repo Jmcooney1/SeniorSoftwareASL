@@ -1,235 +1,326 @@
+from logging import root
 import sys
 import os
-import json
 import importlib
 
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QStackedWidget, QTabWidget, QStackedWidget, QTabWidget,
-    QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QLineEdit, QFileDialog, QFrame, QMessageBox
+    QApplication, QWidget, QMainWindow,
+    QVBoxLayout, QHBoxLayout, QGridLayout,
+    QLabel, QPushButton, QStackedWidget, QFrame,
+    QGraphicsDropShadowEffect
 )
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QFont
+from PySide6.QtCore import Qt, QPropertyAnimation, QEasingCurve, QSize
+from PySide6.QtGui import QFont, QCursor, QMovie, QPixmap
 
-# ── Config ───────────────────────────────────────────────────────────────────
-ROOT_DIR    = os.path.dirname(os.path.abspath(__file__))
-CONFIG_PATH = os.path.join(ROOT_DIR, "config.json")
 
-DATASET_PATH = os.path.join(ROOT_DIR, "dataSet")
+# ── Paths ─────────────────────────────────────────────────────────────────────
+APP_DIR  = os.path.dirname(os.path.abspath(__file__))
+ROOT_DIR = os.path.dirname(APP_DIR)
 SAVE_DIR = os.path.join(ROOT_DIR, "savedVideoPoints")
 
-def load_config() -> dict:
-    if os.path.exists(CONFIG_PATH):
-        try:
-            with open(CONFIG_PATH, "r") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {"dataset_path": "", "save_dir": ""}
-
-def save_config(cfg: dict):
-    with open(CONFIG_PATH, "w") as f:
-        json.dump(cfg, f, indent=4)
-
-def _resolve(path: str) -> str:
-    if not os.path.isabs(path):
-        return os.path.join(ROOT_DIR, path)
-    return path
-
-def config_is_valid(cfg: dict) -> bool:
-    base = cfg.get("dataset_path", "")
-    return bool(base) and os.path.isdir(_resolve(base))
+os.makedirs(SAVE_DIR, exist_ok=True)
 
 
-# ── Module discovery ──────────────────────────────────────────────────────────
-def discover_modules() -> list:
-    """
-    Scans ROOT_DIR for subfolders with __init__.py and main.py.
-    module_info.json is optional:  { "name": "...", "emoji": "..." }
-    Each module's main.py MUST expose:  def get_tab() -> QWidget
-    """
-    modules = []
-    skip = {"myenv", "build", "dist", "__pycache__", ".git", "dataSet", "savedVideoPoints"}
-
-    for entry in sorted(os.listdir(ROOT_DIR)):
-        folder_path = os.path.join(ROOT_DIR, entry)
-        if not os.path.isdir(folder_path):
-            continue
-        if entry in skip or entry.startswith("."):
-            continue
-        if not os.path.exists(os.path.join(folder_path, "__init__.py")):
-            continue
-        if not os.path.exists(os.path.join(folder_path, "main.py")):
-            continue
-
-        info_path = os.path.join(folder_path, "module_info.json")
-        try:
-            with open(info_path) as f:
-                info = json.load(f)
-        except Exception:
-            info = {}
-
-        modules.append({
-            "folder": entry,
-            "name":   info.get("name",  entry.replace("_", " ").title()),
-            "emoji":  info.get("emoji", "📦"),
-        })
-
-    return modules
+# ── Modules ───────────────────────────────────────────────────────────────────
+MODULES = [
+    {
+        "folder": "david_module",
+        "name": "Animation",
+        "emoji": "🎬",
+        "description": "Create animated ASL signs with our interactive tool.",
+    },
+    {
+        "folder": "izzy_module",
+        "name": "Skeleton Translator",
+        "emoji": "🦴",
+        "description": "Extract skeleton keypoints from video and project motion data.",
+    },
+    {
+        "folder": "drews_module",
+        "name": "Translation Quiz",
+        "emoji": "📝",
+        "description": "Test your ASL knowledge with an interactive translation quiz.",
+    },
+]
 
 
-# ── Styles ────────────────────────────────────────────────────────────────────
-BTN_PRIMARY = """
-    QPushButton {
-        background: #2563eb; color: white;
-        border-radius: 8px; padding: 12px 28px;
-        font-size: 14px; font-weight: bold;
-    }
-    QPushButton:hover    { background: #1d4ed8; }
-    QPushButton:pressed  { background: #1e40af; }
-    QPushButton:disabled { background: #94a3b8; }
+# ── Palette ───────────────────────────────────────────────────────────────────
+BG        = "#080c11"
+SURFACE   = "#161b22"
+BORDER    = "#30363d"
+TEXT_PRI  = "#e6edf3"
+TEXT_SEC  = "#8b949e"
+ACCENT    = "#2f81f7"
+ACCENT_HO = "#388bfd"
+
+
+# ── BUTTON (TRANSPARENT OUTLINE STYLE) ────────────────────────────────────────
+BTN_STYLE = f"""
+QPushButton {{
+    background: transparent;
+    color: {TEXT_PRI};
+    border: 1px solid {BORDER};
+    border-radius: 8px;
+    padding: 8px 18px;
+    font-size: 13px;
+    font-weight: 500;
+}}
+QPushButton:hover {{
+    border: 1px solid {ACCENT};
+    color: white;
+    background: rgba(47, 129, 247, 0.08);
+}}
+QPushButton:pressed {{
+    background: rgba(47, 129, 247, 0.18);
+}}
 """
-BTN_SECONDARY = """
-    QPushButton {
-        background: #f1f5f9; color: #334155;
-        border-radius: 8px; padding: 10px 20px;
-        font-size: 13px; border: 1px solid #cbd5e1;
-    }
-    QPushButton:hover { background: #e2e8f0; }
-"""
-TAB_STYLE = """
-    QTabWidget::pane { border: none; background: #f8fafc; }
-    QTabBar::tab {
-        background: #e2e8f0; color: #475569;
-        padding: 10px 22px; font-size: 13px; font-weight: bold;
-        border: none; border-bottom: 3px solid transparent; margin-right: 2px;
-    }
-    QTabBar::tab:selected  { background: #f8fafc; color: #2563eb; border-bottom: 3px solid #2563eb; }
-    QTabBar::tab:hover:!selected { background: #f1f5f9; color: #1e293b; }
+
+BACK_BTN_STYLE = f"""
+QPushButton {{
+    background: transparent;
+    color: {TEXT_SEC};
+    border: 1px solid {BORDER};
+    border-radius: 6px;
+    padding: 6px 16px;
+}}
+QPushButton:hover {{
+    color: {TEXT_PRI};
+    border-color: {ACCENT};
+    background: rgba(47,129,247,0.08);
+}}
 """
 
 
-
-
-# ── Tabbed App Page ───────────────────────────────────────────────────────────
-class TabbedAppPage(QWidget):
-    """
-    The main page. Calls get_tab() on every discovered module and registers
-    the returned QWidget as a tab. No child windows are ever opened.
-    """
-    def __init__(self, on_settings_callback):
+# ──────────────────────────────────────────────────────────────────────────────
+# SPRING CARD
+# ──────────────────────────────────────────────────────────────────────────────
+class SpringCard(QFrame):
+    def __init__(self, mod, on_open):
         super().__init__()
-        self.on_settings = on_settings_callback
-        self._build_ui()
 
-    def _build_ui(self):
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(0)
+        self.mod = mod
+        self.on_open = on_open
 
-        # Header bar
-        header = QWidget()
-        header.setStyleSheet("background: #1e293b;")
-        header.setFixedHeight(54)
-        hl = QHBoxLayout(header)
-        hl.setContentsMargins(24, 0, 24, 0)
-        title = QLabel("ASL Translator")
-        title.setStyleSheet("font-size: 18px; font-weight: bold; color: white;")
-        hl.addWidget(title)
-        hl.addStretch()
-        settings_btn = QPushButton("⚙️  Settings")
-        settings_btn.setStyleSheet("""
-            QPushButton {
-                background: #334155; color: #cbd5e1;
-                border-radius: 6px; padding: 6px 14px; font-size: 12px;
-                border: 1px solid #475569;
-            }
-            QPushButton:hover { background: #475569; color: white; }
+        self.setFixedSize(300, 200)
+        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.setStyleSheet(f"""
+            QFrame {{
+                background: {SURFACE};
+                border: 1px solid {BORDER};
+                border-radius: 12px;
+            }}
         """)
-        settings_btn.clicked.connect(self.on_settings)
-        hl.addWidget(settings_btn)
-        outer.addWidget(header)
 
-        # Central tab widget
-        self.tabs = QTabWidget()
-        self.tabs.setStyleSheet(TAB_STYLE)
-        self._load_tabs()
-        outer.addWidget(self.tabs)
+        self.shadow = QGraphicsDropShadowEffect(self)
+        self.shadow.setBlurRadius(0)
+        self.setGraphicsEffect(self.shadow)
 
-    def _load_tabs(self):
-        if ROOT_DIR not in sys.path:
-            sys.path.insert(0, ROOT_DIR)
+        self.anim = QPropertyAnimation(self, b"size")
+        self.anim.setDuration(420)
+        self.anim.setEasingCurve(QEasingCurve.OutElastic)
 
-        modules = discover_modules()
-        if not modules:
-            empty = QLabel(
-                "No modules found.\n\n"
-                "Each module folder needs:\n"
-                "  • __init__.py\n"
-                "  • main.py  exposing  get_tab() -> QWidget"
-            )
-            empty.setStyleSheet("color: #64748b; font-size: 14px; padding: 40px;")
-            empty.setWordWrap(True)
-            empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.tabs.addTab(empty, "No modules")
-            return
+        self.base = QSize(300, 200)
+        self.hover = QSize(320, 215)
 
-        for mod in modules:
-            label = f"{mod['emoji']}  {mod['name']}"
-            try:
-                module     = importlib.import_module(f"{mod['folder']}.main")
-                tab_widget = module.get_tab()
-                self.tabs.addTab(tab_widget, label)
-            except AttributeError:
-                self.tabs.addTab(self._err(
-                    f"{mod['folder']}/main.py needs:\n\n"
-                    "def get_tab() -> QWidget:\n    return YourWidget()"
-                ), label + " ⚠️")
-            except Exception as e:
-                self.tabs.addTab(self._err(str(e)), label + " ⚠️")
+        self._build()
 
-    @staticmethod
-    def _err(msg: str) -> QLabel:
-        lbl = QLabel(msg)
-        lbl.setStyleSheet("color: #dc2626; font-size: 13px; padding: 30px; font-family: monospace;")
-        lbl.setWordWrap(True)
-        return lbl
+    def _build(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(22, 22, 22, 18)
+
+        emoji = QLabel(self.mod["emoji"])
+        emoji.setStyleSheet("font-size: 32px;")
+        layout.addWidget(emoji)
+
+        name = QLabel(self.mod["name"])
+        name.setStyleSheet(f"color: {TEXT_PRI}; font-weight: bold;")
+        layout.addWidget(name)
+
+        desc = QLabel(self.mod["description"])
+        desc.setStyleSheet(f"color: {TEXT_SEC}; font-size: 12px;")
+        desc.setWordWrap(True)
+        layout.addWidget(desc)
+
+        layout.addStretch()
+
+        btn = QPushButton("Open")
+        btn.setStyleSheet(BTN_STYLE)
+        btn.clicked.connect(lambda: self.on_open(self.mod))
+        layout.addWidget(btn)
+
+    def enterEvent(self, event):
+        self._animate(self.hover)
+        self.shadow.setBlurRadius(30)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._animate(self.base)
+        self.shadow.setBlurRadius(0)
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.on_open(self.mod)
+
+    def _animate(self, target):
+        self.anim.stop()
+        self.anim.setStartValue(self.size())
+        self.anim.setEndValue(target)
+        self.anim.start()
 
 
-# ── Shell Window ──────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
+# HOME SCREEN (FULL SCREEN + 60/40 SPLIT)
+# ──────────────────────────────────────────────────────────────────────────────
+class HomeScreen(QWidget):
+    def __init__(self, on_open):
+        super().__init__()
+        self.on_open = on_open
+        self.setStyleSheet(f"background: {BG};")
+        self._build()
+
+    def _build(self):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        # ── TOP 60% (LOGO LAYER) ─────────────────────────────
+        top = QWidget()
+        top.setStyleSheet(f"background: {BG};")
+
+        top_layout = QVBoxLayout(top)
+        top_layout.setAlignment(Qt.AlignCenter)
+
+        img_path = os.path.join(APP_DIR, "imgANDgifs", "video_full.png")  # FIX: removed duplicate line
+
+        logo = QLabel()
+        logo.setAlignment(Qt.AlignCenter)
+
+        if os.path.exists(img_path):
+            pix = QPixmap(img_path)
+
+            pix = pix.scaled(600, 500, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            logo.setPixmap(pix)  # FIX: was missing — pixmap was scaled but never applied to the label
+        else:
+            fallback = QPixmap(os.path.join(APP_DIR,"imgANDgifs","logo.png"))
+            fallback = fallback.scaled(700, 700, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            logo.setPixmap(fallback)
+
+        top_layout.addWidget(logo, alignment=Qt.AlignCenter)
+
+        # ── BOTTOM 40% ─────────────────────────────
+        bottom = QWidget()
+        bottom.setStyleSheet(f"background: {BG};")
+
+        bottom_layout = QVBoxLayout(bottom)
+        bottom_layout.setContentsMargins(40, 10, 40, 40)
+
+        title = QLabel("Choose a tool")
+        title.setStyleSheet(f"font-size: 24px; color: {TEXT_PRI};")
+        bottom_layout.addWidget(title)
+
+        sub = QLabel("Select a module below to get started.")
+        sub.setStyleSheet(f"color: {TEXT_SEC};")
+        bottom_layout.addWidget(sub)
+
+        grid = QGridLayout()
+        grid.setSpacing(20)
+
+        for i, mod in enumerate(MODULES):
+            grid.addWidget(SpringCard(mod, self.on_open), i // 3, i % 3)
+
+        bottom_layout.addLayout(grid)
+
+        # add full screen usage
+        root.addWidget(top, 6)     # 60%
+        root.addWidget(bottom, 4)  # 40%
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# MODULE VIEW
+# ──────────────────────────────────────────────────────────────────────────────
+class ModuleView(QWidget):
+    def __init__(self, mod, on_back):
+        super().__init__()
+        self.setStyleSheet(f"background: {BG};")
+
+        layout = QVBoxLayout(self)
+
+        # ── header ──
+        header = QWidget()
+        header.setFixedHeight(54)
+        header.setStyleSheet(f"background: {SURFACE}; border-bottom: 1px solid {BORDER};")
+
+        hl = QHBoxLayout(header)
+
+        back = QPushButton("← Home")
+        back.setStyleSheet(BACK_BTN_STYLE)
+        back.clicked.connect(on_back)
+
+        label = QLabel(f"{mod['emoji']} {mod['name']}")
+        label.setStyleSheet(f"color: {TEXT_PRI}; font-weight: bold;")
+
+        hl.addWidget(back)
+        hl.addWidget(label)
+        hl.addStretch()
+
+        layout.addWidget(header)
+
+        # ── LOAD REAL MODULE UI ──
+        layout.addWidget(self._load_module(mod))
+
+    def _load_module(self, mod: dict) -> QWidget:
+        try:
+            if APP_DIR not in sys.path:
+                sys.path.insert(0, APP_DIR)
+
+            module = importlib.import_module(f"{mod['folder']}.main")
+            return module.get_tab()
+
+        except Exception as e:
+            err = QLabel(f"Failed to load module:\n{e}")
+            err.setStyleSheet("color: red; padding: 40px;")
+            return err
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# NAVIGATOR
+# ──────────────────────────────────────────────────────────────────────────────
+class AppNavigator(QStackedWidget):
+    def __init__(self):
+        super().__init__()
+        self.home = HomeScreen(self.open_module)
+        self.addWidget(self.home)
+
+    def open_module(self, mod):
+        view = ModuleView(mod, self.go_home)
+        self.addWidget(view)
+        self.setCurrentWidget(view)
+
+    def go_home(self):
+        self.setCurrentWidget(self.home)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# MAIN WINDOW
+# ──────────────────────────────────────────────────────────────────────────────
 class ShellWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("ASL Translator")
         self.setMinimumSize(1100, 700)
-        self.stack    = QStackedWidget()
-        self.app_page = None
-        self.setCentralWidget(self.stack)
-
-        # Go straight to the main app (settings page removed for now)
-        self._go_home()
-
-    def _go_home(self):
-        # Tear down the old page if we're returning from settings
-        if self.app_page is not None:
-            self.stack.removeWidget(self.app_page)
-            self.app_page.deleteLater()
-
-        # ✅ Actually instantiate the page (was commented out before)
-        self.app_page = TabbedAppPage(on_settings_callback=self._go_settings)
-        self.stack.addWidget(self.app_page)
-        self.stack.setCurrentWidget(self.app_page)
-
-    def _go_settings(self):
-        # Placeholder — wire up a SettingsPage here when you're ready
-        QMessageBox.information(self, "Settings", "Settings page coming soon.")
+        self.setCentralWidget(AppNavigator())
 
 
-# ── Entry point ───────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
+# ENTRY
+# ──────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     app.setFont(QFont("Helvetica Neue", 13))
-    window = ShellWindow()
-    window.show()
+
+    w = ShellWindow()
+    w.show()
+
     sys.exit(app.exec())

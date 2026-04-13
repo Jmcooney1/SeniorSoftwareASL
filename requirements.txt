@@ -27,4 +27,3 @@ sounddevice==0.5.5
 fastdtw==0.3.4
 scipy==1.15.3
 panda3d==1.10.16
-QPanda3D==0.2.10

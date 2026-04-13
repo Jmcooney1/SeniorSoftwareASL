@@ -1,3 +1,4 @@
+from logging import root
 import sys
 import os
 import importlib
@@ -9,7 +10,7 @@ from PySide6.QtWidgets import (
     QGraphicsDropShadowEffect
 )
 from PySide6.QtCore import Qt, QPropertyAnimation, QEasingCurve, QSize
-from PySide6.QtGui import QFont, QCursor, QPixmap
+from PySide6.QtGui import QFont, QCursor, QMovie, QPixmap
 
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
@@ -40,12 +41,11 @@ MODULES = [
         "emoji": "📝",
         "description": "Test your ASL knowledge with an interactive translation quiz.",
     },
-    
 ]
 
 
 # ── Palette ───────────────────────────────────────────────────────────────────
-BG        = "#0d1117"
+BG        = "#080c11"
 SURFACE   = "#161b22"
 BORDER    = "#30363d"
 TEXT_PRI  = "#e6edf3"
@@ -74,7 +74,6 @@ QPushButton:pressed {{
     background: rgba(47, 129, 247, 0.18);
 }}
 """
-
 
 BACK_BTN_STYLE = f"""
 QPushButton {{
@@ -185,22 +184,29 @@ class HomeScreen(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        screen_h = self.screen().size().height()
-
         # ── TOP 60% (LOGO LAYER) ─────────────────────────────
         top = QWidget()
-        top.setFixedHeight(int(screen_h * 0.6))
         top.setStyleSheet(f"background: {BG};")
 
         top_layout = QVBoxLayout(top)
         top_layout.setAlignment(Qt.AlignCenter)
 
+        img_path = os.path.join(APP_DIR, "assets", "video_full.png")  # FIX: removed duplicate line
+
         logo = QLabel()
-        pix = QPixmap("logo.png")  # <-- your logo file
-        logo.setPixmap(pix.scaledToHeight(int(screen_h * 0.4), Qt.SmoothTransformation))
         logo.setAlignment(Qt.AlignCenter)
 
-        top_layout.addWidget(logo)
+        if os.path.exists(img_path):
+            pix = QPixmap(img_path)
+
+            pix = pix.scaled(600, 500, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            logo.setPixmap(pix)  # FIX: was missing — pixmap was scaled but never applied to the label
+        else:
+            fallback = QPixmap(os.path.join(APP_DIR,"assets","logo.png"))
+            fallback = fallback.scaled(700, 700, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            logo.setPixmap(fallback)
+
+        top_layout.addWidget(logo, alignment=Qt.AlignCenter)
 
         # ── BOTTOM 40% ─────────────────────────────
         bottom = QWidget()
@@ -226,8 +232,8 @@ class HomeScreen(QWidget):
         bottom_layout.addLayout(grid)
 
         # add full screen usage
-        root.addWidget(top)
-        root.addWidget(bottom)
+        root.addWidget(top, 6)     # 60%
+        root.addWidget(bottom, 4)  # 40%
 
 
 # ──────────────────────────────────────────────────────────────────────────────
