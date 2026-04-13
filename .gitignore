@@ -8,7 +8,6 @@ myenv/
 
 # Datasets
 dataSet/kily-dataset/*
-dataSet/david-dataset/*
 
 # Build output (setup.sh rebuilds these)
 dist/
