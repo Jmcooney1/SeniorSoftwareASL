@@ -1,19 +1,42 @@
 import os
 import sys
 import random
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+import numpy as np
+import subprocess
+
 
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QMessageBox
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt,QTimer
 from PyQt6.QtGui import QPixmap
 
-from googleMedaPipe.motion_acc_test import motion_acc_test
-from googleMedaPipe.accuracy_test import accuracy_test
+
+
+base_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(base_dir)
+os.chdir(os.path.join(parent_dir, 'googleMedaPipe'))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+asl_library = np.load(os.path.join(parent_dir, 'googleMedaPipe', 'asl_library.npy'), allow_pickle=True).item()
+
 
 class HangmanTab(QWidget):
+    BRIDGE_FILE = '/tmp/asl_detected_letter.txt'
+    def accuracy_test(self):
+        
+        if os.path.exists(self.BRIDGE_FILE):
+            os.remove(self.BRIDGE_FILE)
+        
+        bridge_path = os.path.join(base_dir, 'accuracy_test_bridge.py')  # ← base_dir points to jace_module
+        self.asl_process = subprocess.Popen(
+        [sys.executable, bridge_path],
+        cwd=os.path.join(parent_dir, 'googleMedaPipe')  # ← still run it FROM googleMedaPipe so it finds asl_library.npy
+        )
+
+        self.asl_timer = QTimer()
+        self.asl_timer.timeout.connect(self.check_asl_letter)
+        self.asl_timer.start(500)
     def __init__(self):
         super().__init__()
 
@@ -55,8 +78,8 @@ class HangmanTab(QWidget):
 
         button = QPushButton("Static Letter Accuracy Test")
         buttonMotion = QPushButton("Motion Accuracy Test")
-        button.clicked.connect(self.motion_acc_test)
-        buttonMotion.clicked.connect(self.accuracy_test)
+        button.clicked.connect(self.accuracy_test)
+       # buttonMotion.clicked.connect(self.accuracy_test)
         main_layout.addWidget(button)
         main_layout.addWidget(buttonMotion)
 
@@ -130,6 +153,14 @@ class HangmanTab(QWidget):
             if char != " " and char not in self.guessed_letters:
                 return False
         return True
+
+    def check_asl_letter(self):
+        if os.path.exists(self.BRIDGE_FILE):
+            with open(self.BRIDGE_FILE, 'r') as f:
+                letter = f.read().strip()
+            if letter:
+                os.remove(self.BRIDGE_FILE)  # clear it so same letter isn't read twice
+                self.guess_letter(letter)
 
 
 if __name__ == "__main__":
