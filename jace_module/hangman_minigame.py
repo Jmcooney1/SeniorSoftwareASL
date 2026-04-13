@@ -19,6 +19,7 @@ parent_dir = os.path.dirname(base_dir)
 os.chdir(os.path.join(parent_dir, 'googleMedaPipe'))
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 asl_library = np.load(os.path.join(parent_dir, 'googleMedaPipe', 'asl_library.npy'), allow_pickle=True).item()
+asl_motion_library = np.load(os.path.join(parent_dir, 'googleMedaPipe', 'asl_motion_library.npy'), allow_pickle=True).item()
 
 
 class HangmanTab(QWidget):
@@ -33,6 +34,17 @@ class HangmanTab(QWidget):
         [sys.executable, bridge_path],
         cwd=os.path.join(parent_dir, 'googleMedaPipe')  # ← still run it FROM googleMedaPipe so it finds asl_library.npy
         )
+
+        self.asl_timer = QTimer()
+        self.asl_timer.timeout.connect(self.check_asl_letter)
+        self.asl_timer.start(500)
+
+    def motion_accuracy_test(self):
+        if os.path.exists(self.BRIDGE_FILE):
+            os.remove(self.BRIDGE_FILE)
+
+        bridge_path = os.path.join(base_dir, 'motion_acc_test_bridge.py')
+        self.asl_process = subprocess.Popen([sys.executable, bridge_path],cwd=os.path.join(parent_dir, 'googleMedaPipe'))
 
         self.asl_timer = QTimer()
         self.asl_timer.timeout.connect(self.check_asl_letter)
@@ -79,7 +91,7 @@ class HangmanTab(QWidget):
         button = QPushButton("Static Letter Accuracy Test")
         buttonMotion = QPushButton("Motion Accuracy Test")
         button.clicked.connect(self.accuracy_test)
-       # buttonMotion.clicked.connect(self.accuracy_test)
+        buttonMotion.clicked.connect(self.motion_accuracy_test)
         main_layout.addWidget(button)
         main_layout.addWidget(buttonMotion)
 
