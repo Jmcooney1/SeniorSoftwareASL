@@ -119,15 +119,15 @@ class TranslatorWidget(QWidget):
         input_row.addWidget(self._run_btn)
         root.addLayout(input_row)
 
-        # Splitter: left = tabs (sign widget + database), right = log
-        splitter = QSplitter(Qt.Orientation.Horizontal)
+        # Main splitter: left = viewer+database stacked, right = log
+        main_splitter = QSplitter(Qt.Orientation.Horizontal)
 
-        # ── Left side: tabs ──────────────────────────────────────────
-        tabs = QTabWidget()
+        # ── Left side: vertical splitter (60% viewer / 40% database) ────
+        left_splitter = QSplitter(Qt.Orientation.Vertical)
 
-        # Tab 1 — 3D viewer
-        viewer_tab = QWidget()
-        vt_layout = QVBoxLayout(viewer_tab)
+        # TOP 60% — 3D viewer
+        viewer_widget = QWidget()
+        vt_layout = QVBoxLayout(viewer_widget)
         vt_layout.setContentsMargins(4, 4, 4, 4)
 
         self._now_playing = QLabel("Select a word to begin")
@@ -135,16 +135,19 @@ class TranslatorWidget(QWidget):
         self._now_playing.setStyleSheet("font-size: 15px; font-weight: bold; padding: 4px;")
         vt_layout.addWidget(self._now_playing)
 
-        # SignWidget — the entire Panda3D viewport, no csv yet
         self._sign_widget = SignWidget(parent=self)
         vt_layout.addWidget(self._sign_widget, stretch=1)
 
-        tabs.addTab(viewer_tab, "🤟  3D Viewer")
+        left_splitter.addWidget(viewer_widget)
 
-        # Tab 2 — database browser
-        db_tab = QWidget()
-        dt_layout = QVBoxLayout(db_tab)
+        # BOTTOM 40% — database browser
+        db_widget = QWidget()
+        dt_layout = QVBoxLayout(db_widget)
         dt_layout.setContentsMargins(4, 4, 4, 4)
+
+        db_label = QLabel("📖  Database")
+        db_label.setStyleSheet("font-size: 13px; font-weight: bold; color: #38bdf8; padding: 2px 0;")
+        dt_layout.addWidget(db_label)
 
         self._search = QLineEdit()
         self._search.setPlaceholderText("Search signs…")
@@ -162,18 +165,23 @@ class TranslatorWidget(QWidget):
         self._table.cellClicked.connect(self._on_table_clicked)
         dt_layout.addWidget(self._table)
 
-        tabs.addTab(db_tab, "📖  Database")
-        splitter.addWidget(tabs)
+        left_splitter.addWidget(db_widget)
 
-        # ── Right side: log ──────────────────────────────────────────
+        # Set 60/40 split
+        left_splitter.setStretchFactor(0, 6)
+        left_splitter.setStretchFactor(1, 4)
+
+        main_splitter.addWidget(left_splitter)
+
+        # ── Right side: log ──────────────────────────────────────────────
         self._log_box = QTextEdit()
         self._log_box.setReadOnly(True)
         self._log_box.setMaximumWidth(280)
-        splitter.addWidget(self._log_box)
-        splitter.setStretchFactor(0, 3)
-        splitter.setStretchFactor(1, 1)
+        main_splitter.addWidget(self._log_box)
+        main_splitter.setStretchFactor(0, 3)
+        main_splitter.setStretchFactor(1, 1)
 
-        root.addWidget(splitter, stretch=1)
+        root.addWidget(main_splitter, stretch=1)
 
     def _populate_table(self):
         if self._dataset is None:
