@@ -12,10 +12,10 @@ player = SignPlayerWidget()
 your_layout.addWidget(player, 1)   # stretch=1 so it fills available space
 
 # 2. Play a sign (absolute path to a CSV file)
-player.play("C:/path/to/sign.csv")
+player.play("path/to/sign.csv")
 
 # 3. Switch to a different sign (no restart needed — just call play again)
-player.play("C:/path/to/another_sign.csv")
+player.play("path/to/another_sign.csv")
 
 # 4. Stop and tear down (frees resources; you can call play() again later)
 player.stop()
