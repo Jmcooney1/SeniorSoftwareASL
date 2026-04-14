@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer
@@ -17,9 +18,11 @@ from david_module.panda_port.panda_core import (
 
 
 class _PandaWorld(ShowBase):
+    # ← no setAttribute here, this is a Panda class not a Qt class
 
     def __init__(self, parent_handle: int, width: int, height: int, csv_path: Path | None):
         loadPrcFileData("", "window-type none")
+        loadPrcFileData("", "process-events 0")
         super().__init__(windowType="none")
 
         props = WindowProperties()
@@ -80,7 +83,11 @@ class SignWidget(QWidget):
         self._timer: QTimer | None = None
         self._boot_retries = 0
 
+        # Qt widget attributes — these belong here, on the QWidget
         self.setAttribute(Qt.WidgetAttribute.WA_NativeWindow, True)
+        if sys.platform == "win32":
+            self.setAttribute(Qt.WidgetAttribute.WA_PaintOnScreen, True)
+
         self.setMinimumSize(640, 480)
 
     def play_sign(self, csv_path: str | Path) -> None:
@@ -133,8 +140,6 @@ class SignWidget(QWidget):
             print(f"[SignWidget] cleanup warning: {e}")
 
     def _boot_panda(self) -> None:
-        print(f"[SignWidget] _boot_panda — size: {self.width()}x{self.height()}")
-
         if self.width() == 0 or self.height() == 0:
             QTimer.singleShot(100, self._boot_panda)
             return
@@ -148,13 +153,10 @@ class SignWidget(QWidget):
                 height=self.height(),
                 csv_path=self._csv_path,
             )
-            print("[SignWidget] ✅ Panda world created")
         except AssertionError:
-            # lockFocusIfCanDraw — macOS window not ready yet, retry
             self._boot_retries += 1
             if self._boot_retries <= 5:
                 delay = 300 * self._boot_retries
-                print(f"[SignWidget] macOS not ready, retry {self._boot_retries} in {delay}ms")
                 QTimer.singleShot(delay, self._boot_panda)
             else:
                 print("[SignWidget] ❌ gave up after 5 retries")
