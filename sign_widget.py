@@ -18,11 +18,11 @@ from david_module.panda_port.panda_core import (
 
 
 class _PandaWorld(ShowBase):
-    # ← no setAttribute here, this is a Panda class not a Qt class
 
     def __init__(self, parent_handle: int, width: int, height: int, csv_path: Path | None):
         loadPrcFileData("", "window-type none")
         loadPrcFileData("", "process-events 0")
+        loadPrcFileData("", "cocoa-event-loop 0")   # ← stop Panda polling NSApp
         super().__init__(windowType="none")
 
         props = WindowProperties()
@@ -59,6 +59,20 @@ class _PandaWorld(ShowBase):
         except Exception:
             self.pose_ctrl = None
 
+        self._window_ready = False   # ← guard flag
+
+    def mark_ready(self) -> None:
+        self._window_ready = True
+
+    def safe_step(self) -> None:
+        """Step the task manager only when the window is fully initialised."""
+        if not self._window_ready:
+            return
+        try:
+            self.taskMgr.step()
+        except Exception as e:
+            print(f"[PandaWorld] step error (ignored): {e}")
+
     def play_sign(self, csv_path: Path) -> None:
         from david_module.panda_port.animation import CSVSignClip
         self.animator.set_clip(CSVSignClip(csv_path))
@@ -83,8 +97,10 @@ class SignWidget(QWidget):
         self._timer: QTimer | None = None
         self._boot_retries = 0
 
-        # Qt widget attributes — these belong here, on the QWidget
         self.setAttribute(Qt.WidgetAttribute.WA_NativeWindow, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_DontCreateNativeAncestors, True)  # ← reduces AppKit subview nesting
+        if sys.platform == "darwin":
+            self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)     # ← stop Qt painting over Panda's layer
         if sys.platform == "win32":
             self.setAttribute(Qt.WidgetAttribute.WA_PaintOnScreen, True)
 
@@ -105,7 +121,7 @@ class SignWidget(QWidget):
             self._timer.start(16)
 
     # ------------------------------------------------------------------
-    # Qt internals — nothing below needs to be called by users
+    # Qt internals
     # ------------------------------------------------------------------
 
     def showEvent(self, event):
@@ -122,10 +138,35 @@ class SignWidget(QWidget):
 
     def closeEvent(self, event):
         self.stop()
+        self._shutdown_panda()
         super().closeEvent(event)
+        
+    def _shutdown_panda(self) -> None:
+        # 1. Stop the Qt render timer first
+        if self._timer is not None:
+            self._timer.stop()
+            self._timer = None
+
+        # 2. Destroy the Panda3D world cleanly
+        if self._world is not None:
+            try:
+                self._world.taskMgr.stop()        # stop internal task threads
+            except Exception:
+                pass
+            try:
+                self._world.destroy()             # shuts down graphics engine, window, etc.
+            except Exception:
+                pass
+            # 3. Remove the global `base` reference ShowBase injects
+            try:
+                import builtins
+                if getattr(builtins, "base", None) is self._world:
+                    delattr(builtins, "base")
+            except Exception:
+                pass
+            self._world = None
 
     def _cleanup_stale_showbase(self) -> None:
-        """Destroy any half-initialised ShowBase so we can create a fresh one."""
         try:
             import builtins
             existing = getattr(builtins, "base", None)
@@ -168,6 +209,12 @@ class SignWidget(QWidget):
 
         self._boot_retries = 0
         self._timer = QTimer(self)
-        self._timer.timeout.connect(self._world.taskMgr.step)
+        self._timer.timeout.connect(self._world.safe_step)   # ← safe_step not taskMgr.step directly
         self._timer.start(16)
+
+        # Give the window one extra frame to settle before we start stepping.
+        # This is the window that was getting the bad address — it needs to be
+        # fully registered with AppKit before Panda starts calling process_events.
+        QTimer.singleShot(150, self._world.mark_ready)
+
         print("[SignWidget] ✅ render timer started")
