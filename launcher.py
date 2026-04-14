@@ -24,7 +24,7 @@ os.makedirs(SAVE_DIR, exist_ok=True)
 # ── Modules ───────────────────────────────────────────────────────────────────
 MODULES = [
     {
-        "folder": "david_module",
+        "folder": "kily_module",
         "name": "Animation",
         "emoji": "🎬",
         "description": "Create animated ASL signs with our interactive tool.",
