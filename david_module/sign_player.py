@@ -294,6 +294,7 @@ class SignPlayerWidget(QWidget):
         if self._base is not None and self._base.win is not None:
             from panda3d.core import WindowProperties
             props = WindowProperties()
+            props.setOrigin(0, 0)
             props.setSize(event.size().width(), event.size().height())
             self._base.win.requestProperties(props)
 
