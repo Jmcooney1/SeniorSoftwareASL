@@ -2,8 +2,7 @@ from logging import root
 import sys
 import os
 import importlib
-import sign_widget
-from sign_widget import SignWidget
+from david_module.sign_player import SignPlayerWidget
 
 from PySide6.QtWidgets import (
     QApplication, QWidget, QMainWindow,
@@ -303,8 +302,9 @@ class AppNavigator(QStackedWidget):
         current = self.currentWidget()
         self.setCurrentWidget(self.home)
         if current is not self.home:
-            for sign_widget in current.findChildren(SignWidget):
-                sign_widget._shutdown_panda()
+            for sign_widget in current.findChildren(SignPlayerWidget):
+                sign_widget.stop()
+                sign_widget.setParent(None)
             self.removeWidget(current)
             current.deleteLater()  
 
@@ -320,8 +320,8 @@ class ShellWindow(QMainWindow):
         self.setCentralWidget(AppNavigator())
 
     def closeEvent(self, event):
-        for widget in self.findChildren(SignWidget):
-            widget._shutdown_panda()
+        for widget in self.findChildren(SignPlayerWidget):
+            widget.closeEvent(self.event)
         super().closeEvent(event)
 
 
