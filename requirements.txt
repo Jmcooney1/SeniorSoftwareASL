@@ -26,5 +26,4 @@ six==1.17.0
 sounddevice==0.5.5
 fastdtw
 scipy
-panda3d==1.10.16
-QPanda3D==0.2.10
+panda3d>=1.10.14
