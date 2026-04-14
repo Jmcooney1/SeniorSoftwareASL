@@ -21,7 +21,7 @@ class TrainerWidget(QWidget):
             os.makedirs(os.path.dirname(self.lib_path), exist_ok=True)
 
         # --- CONFIG ---
-        self.RECORD_DURATION = 2.5
+        self.RECORD_DURATION = 6.0 
         self.ALPHA = 0.3 
 
         # --- STATE ---
@@ -61,42 +61,36 @@ class TrainerWidget(QWidget):
         layout = QVBoxLayout(self)
         layout.setSpacing(15)
         
-        # --- USER IDENTIFICATION (Normalized Input) ---
+        # User Identification Panel
         user_panel = QFrame()
         user_panel.setStyleSheet("background: #1e293b; border-radius: 10px; border: 1px solid #334155;")
         user_layout = QHBoxLayout(user_panel)
-        
         user_label = QLabel("👤 CURRENT USER:")
         user_label.setStyleSheet("color: #38bdf8; font-weight: bold;")
         self.user_input = QLineEdit()
         self.user_input.setPlaceholderText("Enter Name (e.g., Izzy or Jace)")
         self.user_input.setText("Default")
         self.user_input.setStyleSheet("padding: 8px; background: #0f172a; color: white; border: 1px solid #38bdf8; border-radius: 4px;")
-        
         user_layout.addWidget(user_label)
         user_layout.addWidget(self.user_input)
         layout.addWidget(user_panel)
 
-        # --- GESTURE CONFIG ---
+        # Gesture Config Panel
         config_panel = QFrame()
         config_panel.setStyleSheet("background: #f1f5f9; border-radius: 12px; border: 1px solid #cbd5e1;")
         config_layout = QVBoxLayout(config_panel)
-
         mode_row = QHBoxLayout()
         self.mode_btn = QPushButton("MODE: DUAL HAND 👐")
         self.mode_btn.setCheckable(True)
         self.mode_btn.setStyleSheet("background: #1e293b; color: white; border-radius: 8px; padding: 12px; font-weight: bold;")
         self.mode_btn.clicked.connect(self._toggle_mode)
-
         self.side_btn = QPushButton("SIDE: RIGHT ➡️")
         self.side_btn.setStyleSheet("background: #3b82f6; color: white; border-radius: 8px; padding: 12px; font-weight: bold;")
         self.side_btn.setVisible(False)
         self.side_btn.clicked.connect(self._toggle_side)
-
         self.name_input = QLineEdit()
         self.name_input.setPlaceholderText("Gesture Name (e.g. apple)")
         self.name_input.setStyleSheet("padding: 10px; background: white; color: black; border-radius: 6px; border: 2px solid #94a3b8;")
-
         mode_row.addWidget(self.mode_btn)
         mode_row.addWidget(self.side_btn)
         mode_row.addWidget(self.name_input)
@@ -173,6 +167,10 @@ class TrainerWidget(QWidget):
         if not self.user_input.text().strip():
             QMessageBox.warning(self, "Error", "Please identify the user.")
             return
+        
+        # --- THE FIX: RESET HISTORY BEFORE RECORDING ---
+        self.history = {"left": None, "right": None}
+        
         self.sequence = []
         self.recording = True
         self.start_time = time.time()
@@ -209,12 +207,12 @@ class TrainerWidget(QWidget):
 
             if not self.mode_btn.isChecked():
                 self.sequence.append({
-                    "left": curr_hands["left"] if curr_hands["left"] is not None else np.zeros(66),
-                    "right": curr_hands["right"] if curr_hands["right"] is not None else np.zeros(66)
+                    "left": curr_hands["left"] if curr_hands["left"] is not None else np.zeros(69),
+                    "right": curr_hands["right"] if curr_hands["right"] is not None else np.zeros(69)
                 })
             else:
                 target = "left" if "LEFT" in self.side_btn.text() else "right"
-                self.sequence.append(curr_hands[target] if curr_hands[target] is not None else np.zeros(66))
+                self.sequence.append(curr_hands[target] if curr_hands[target] is not None else np.zeros(69))
 
             if elapsed >= self.RECORD_DURATION:
                 self.recording = False
@@ -230,31 +228,32 @@ class TrainerWidget(QWidget):
         wrist = pts[0]
         hand_shape = ((pts - wrist) * 10).flatten() 
         spatial_pos = np.array([wrist[0] - nose_lm.x, wrist[1] - nose_lm.y, 0]) * 10 if nose_lm else np.zeros(3)
-        combined = np.concatenate([hand_shape, spatial_pos])
+        
+        if self.history[side] is not None:
+            prev_spatial = self.history[side][63:66]
+            velocity = (spatial_pos - prev_spatial) * 5
+        else:
+            velocity = np.zeros(3)
 
-        if self.history[side] is None:
+        combined = np.concatenate([hand_shape, spatial_pos, velocity])
+
+        if self.history[side] is None or len(self.history[side]) != 69:
             self.history[side] = combined
         else:
             self.history[side] = (self.ALPHA * combined) + ((1 - self.ALPHA) * self.history[side])
         return self.history[side]
 
     def _save_data(self):
-        # --- NORMALIZATION ---
         user = self.user_input.text().strip().lower().replace(" ", "_")
         name = self.name_input.text().strip().lower().replace(" ", "_")
-        
         lib = np.load(self.lib_path, allow_pickle=True).item() if os.path.exists(self.lib_path) else {}
-        
         side_tag = "dual" if not self.mode_btn.isChecked() else ("left" if "LEFT" in self.side_btn.text() else "right")
         prefix = f"{user}_{name}_{side_tag}_"
-        
         existing = [int(k.split("_")[-1]) for k in lib if k.startswith(prefix)]
         idx = max(existing) + 1 if existing else 1
         label = f"{prefix}{idx}"
-
         lib[label] = np.array(self.sequence, dtype=object)
         np.save(self.lib_path, lib)
-        
         self.history_label.setText(f"✅ Saved for '{user}': {label}")
         self._reset_ui()
 
