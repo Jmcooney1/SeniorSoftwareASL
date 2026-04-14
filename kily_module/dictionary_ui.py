@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
 
 from kily_module.main import LANDMARK_FOLDER
 from dataSet.david_dataset.cvsPoseDataSet import CVSPoseDataSet
-from sign_widget import SignWidget
+from david_module.sign_player import SignPlayerWidget
 
 
 class TranslatorWidget(QWidget):
@@ -70,7 +70,7 @@ class TranslatorWidget(QWidget):
             return
 
         self._now_playing.setText(f"Now playing: {word}")
-        self._sign_widget.play_sign(csv_path)
+        self._sign_widget.play(csv_path)
         self._log(f"▶  Playing: {word}")
 
     def _on_translate(self):
@@ -112,6 +112,7 @@ class TranslatorWidget(QWidget):
         self._input = QLineEdit()
         self._input.setPlaceholderText("Type a word to sign…")
         self._input.returnPressed.connect(self._on_translate)
+        self._input.textChanged.connect(self._on_input_changed)
         self._run_btn = QPushButton("▶  Play")
         self._run_btn.setEnabled(False)
         self._run_btn.clicked.connect(self._on_translate)
@@ -135,7 +136,7 @@ class TranslatorWidget(QWidget):
         self._now_playing.setStyleSheet("font-size: 15px; font-weight: bold; padding: 4px;")
         vt_layout.addWidget(self._now_playing)
 
-        self._sign_widget = SignWidget(parent=self)
+        self._sign_widget = SignPlayerWidget(parent=self)
         vt_layout.addWidget(self._sign_widget, stretch=1)
 
         left_splitter.addWidget(viewer_widget)

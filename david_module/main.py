@@ -25,11 +25,12 @@ def _available_signs():
 
 
 class DavidModuleTab(QWidget):
-    """A simple wrapper tab that can launch the Panda app.
+    """Wrapper tab that embeds the Panda3D sign viewer.
 
-    Embedding is experimental — it will try to parent the Panda window
-    into this widget, and falls back to launching a separate popout
-    process if embedding is not supported on the platform/Panda build.
+    The embedded player uses Panda3D's ``parent-window`` PRC variable to
+    render directly inside the Qt widget.  If that fails, it automatically
+    falls back to a popout subprocess.  A manual popout button is also
+    available for debugging.
     """
 
     def __init__(self):
@@ -57,12 +58,15 @@ class DavidModuleTab(QWidget):
             self.sign_combo.setCurrentIndex(0)
         btn_row.addWidget(sign_label)
         btn_row.addWidget(self.sign_combo, 1)
-        self.launch_btn = QPushButton("Open Panda (Popout)")
-        self.launch_btn.clicked.connect(self.open_popout)
-        self.embed_btn = QPushButton("Start Embedded (Slow)")
+        self.embed_btn = QPushButton("▶  Start Embedded")
         self.embed_btn.clicked.connect(self.start_embedded)
-        btn_row.addWidget(self.launch_btn)
+        self.stop_btn = QPushButton("■  Stop")
+        self.stop_btn.clicked.connect(self.stop_embedded)
+        self.launch_btn = QPushButton("Open Popout")
+        self.launch_btn.clicked.connect(self.open_popout)
         btn_row.addWidget(self.embed_btn)
+        btn_row.addWidget(self.stop_btn)
+        btn_row.addWidget(self.launch_btn)
         layout.addLayout(btn_row)
 
         self.status = QLabel("")
@@ -110,10 +114,15 @@ class DavidModuleTab(QWidget):
         else:
             self.status.setText("Embedded start failed — see player area.")
 
+    def stop_embedded(self):
+        self.player.stop()
+        self.status.setText("Stopped.")
+
     def closeEvent(self, event):
         try:
             if self.proc is not None:
                 self.proc.terminate()
         except Exception:
             pass
+        self.player.stop()
         return super().closeEvent(event)
