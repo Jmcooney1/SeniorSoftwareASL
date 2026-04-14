@@ -2,6 +2,8 @@ from logging import root
 import sys
 import os
 import importlib
+import sign_widget
+from sign_widget import SignWidget
 
 from PySide6.QtWidgets import (
     QApplication, QWidget, QMainWindow,
@@ -189,12 +191,12 @@ class HomeScreen(QWidget):
         top.setStyleSheet(f"background: {BG};")
 
         top_layout = QVBoxLayout(top)
-        top_layout.setAlignment(Qt.AlignCenter)
+        top_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         img_path = os.path.join(APP_DIR, "assets", "video_full.png")  # FIX: removed duplicate line
 
         logo = QLabel()
-        logo.setAlignment(Qt.AlignCenter)
+        logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         if os.path.exists(img_path):
             pix = QPixmap(img_path)
@@ -206,7 +208,7 @@ class HomeScreen(QWidget):
             fallback = fallback.scaled(700, 700, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             logo.setPixmap(fallback)
 
-        top_layout.addWidget(logo, alignment=Qt.AlignCenter)
+        top_layout.addWidget(logo, alignment=Qt.AlignmentFlag.AlignCenter)
 
         # ── BOTTOM 40% ─────────────────────────────
         bottom = QWidget()
@@ -298,7 +300,13 @@ class AppNavigator(QStackedWidget):
         self.setCurrentWidget(view)
 
     def go_home(self):
+        current = self.currentWidget()
         self.setCurrentWidget(self.home)
+        if current is not self.home:
+            for sign_widget in current.findChildren(SignWidget):
+                sign_widget._shutdown_panda()
+            self.removeWidget(current)
+            current.deleteLater()  
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -310,6 +318,11 @@ class ShellWindow(QMainWindow):
         self.setWindowTitle("ASL Translator")
         self.setMinimumSize(1100, 700)
         self.setCentralWidget(AppNavigator())
+
+    def closeEvent(self, event):
+        for widget in self.findChildren(SignWidget):
+            widget._shutdown_panda()
+        super().closeEvent(event)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
