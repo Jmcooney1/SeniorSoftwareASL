@@ -378,7 +378,7 @@ def update_sign_hud(hud, animator) -> None:
 
 def create_animator(actor: Actor, csv_path=None):
     """Create a CSVRigAnimator, optionally pre-loaded with *csv_path*."""
-    from animation import CSVRigAnimator
+    from david_module.panda_port.animation import CSVRigAnimator
     from pathlib import Path
 
     return CSVRigAnimator(actor, csv_path=Path(csv_path) if csv_path else None)

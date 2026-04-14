@@ -17,20 +17,17 @@ def _load_paths():
         if os.path.exists(candidate):
             with open(candidate) as f:
                 cfg = json.load(f)
-            base = cfg.get("dataset_path", "dataSet")
-            save = cfg.get("save_dir", "savedVideoPoints")
+            base = cfg.get("dataset_path", "dataSet")    
             if not os.path.isabs(base): base = os.path.join(search, base)
-            if not os.path.isabs(save): save = os.path.join(search, save)
-            return base, save
+            return base
         search = os.path.dirname(search)
     root = os.path.dirname(SCRIPT_DIR)
-    return os.path.join(root, "dataSet"), os.path.join(root, "savedVideoPoints")
+    return os.path.join(root, "dataSet")
 
 
-_BASE,    SAVE_DIR     = _load_paths()
-DB_PATH      = os.path.join(_BASE, "kily_dataset", "wlasl-complete")
-VIDEO_FOLDER = os.path.join(DB_PATH, "videos")
-VIDEO_INDEX  = os.path.join(DB_PATH, "wlasl_class_list.txt")
+_BASE = _load_paths()
+DB_PATH      = os.path.join(_BASE, "david_dataset")
+LANDMARK_FOLDER = os.path.join(DB_PATH, "Landmarks")
 
 
 def get_tab():
@@ -38,5 +35,5 @@ def get_tab():
     from PySide6.QtWidgets import QWidget
     # skeleton_translation.py defines the full UI as a QWidget subclass.
     # We just import and return it — no QMainWindow, no new window.
-    from kily_module.skeleton_translation import TranslatorWidget
+    from kily_module.dictionary_ui import TranslatorWidget
     return TranslatorWidget()
