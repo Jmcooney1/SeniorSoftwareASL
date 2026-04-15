@@ -7,10 +7,8 @@ mp_env/
 myenv/
 pySideEnv/
 
-# Dataset (too large for git)
-dataSet/kily_dataset/*
-dataSet/david_dataset/Landmarks/*
-
+# Datasets
+dataSet/kily-dataset/*
 
 # Build output (setup.sh rebuilds these)
 dist/
@@ -26,3 +24,6 @@ __pycache__/
 
 # Mac junk
 .DS_Store
+
+# VS Code
+*.code-workspace
