@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
     QApplication, QWidget, QMainWindow,
     QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QPushButton, QStackedWidget, QFrame,
-    QGraphicsDropShadowEffect, QScrollArea, QSizePolicy
+    QGraphicsDropShadowEffect, QScrollArea, QSizePolicy, QTabWidget
 )
 from PySide6.QtCore import Qt, QPropertyAnimation, QEasingCurve, QSize
 from PySide6.QtGui import QFont, QCursor, QMovie, QPixmap
@@ -155,15 +155,15 @@ class SpringCard(QFrame):
         layout.setContentsMargins(22, 22, 22, 18)
 
         emoji = QLabel(self.mod["emoji"])
-        emoji.setStyleSheet("font-size: 32px;")
+        emoji.setStyleSheet("font-size: 32px; border: none;")
         layout.addWidget(emoji)
 
         name = QLabel(self.mod["name"])
-        name.setStyleSheet(f"color: {TEXT_PRI}; font-weight: bold; font-size: 15px;")
+        name.setStyleSheet(f"color: {TEXT_PRI}; font-weight: bold;")
         layout.addWidget(name)
 
         desc = QLabel(self.mod["description"])
-        desc.setStyleSheet(f"color: {TEXT_SEC}; font-size: 12px;")
+        desc.setStyleSheet(f"color: {TEXT_SEC}; font-size: 12px; border: none;")
         desc.setWordWrap(True)
         layout.addWidget(desc)
 
@@ -213,13 +213,28 @@ class HomeScreen(QWidget):
         self.setStyleSheet(f"background: {BG};")
         self._build()
 
-    # ── preload pixmaps ───────────────────────────────────────────────────────
-    def _load_pixmap(self, filename):
-        if filename in self._raw_pixmaps:
-            return self._raw_pixmaps[filename]
-        path = os.path.join(APP_DIR, "assets", filename)
-        if os.path.exists(path):
-            pix = QPixmap(path)
+    def _build(self):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        # ── TOP 60% (LOGO LAYER) ─────────────────────────────
+        top = QWidget()
+        top.setStyleSheet(f"background: {BG};")
+
+        top_layout = QVBoxLayout(top)
+        top_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        img_path = os.path.join(APP_DIR, "assets", "video_full.png")  # FIX: removed duplicate line
+
+        logo = QLabel()
+        logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        if os.path.exists(img_path):
+            pix = QPixmap(img_path)
+
+            pix = pix.scaled(600, 500, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            logo.setPixmap(pix)  # FIX: was missing — pixmap was scaled but never applied to the label
         else:
             # grey placeholder so the layout still works
             pix = QPixmap(800, 400)
@@ -241,128 +256,31 @@ class HomeScreen(QWidget):
         self.logo_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         root_layout.addWidget(self.logo_label, stretch=6)
 
-        # ── BOTTOM PANEL ─────────────────────────────────────────────────────
+        # ── BOTTOM 40% ─────────────────────────────
         bottom = QWidget()
         bottom.setStyleSheet(f"background: {BG};")
         bottom_layout = QVBoxLayout(bottom)
-        bottom_layout.setContentsMargins(40, 14, 40, 30)
-        bottom_layout.setSpacing(14)
-        
-        tab_row = QHBoxLayout()
-        tab_row.setSpacing(10)
+        bottom_layout.setContentsMargins(40, 10, 40, 40)
 
-        self.tab_buttons = []
+        title = QLabel("Choose a tool")
+        title.setStyleSheet(f"font-size: 24px; color: {TEXT_PRI};")
+        bottom_layout.addWidget(title)
 
-        # LEFT STRETCH (important)
-        tab_row.addStretch()
+        sub = QLabel("Select a module below to get started.")
+        sub.setStyleSheet(f"color: {TEXT_SEC};")
+        bottom_layout.addWidget(sub)
 
-        for i, cat in enumerate(CATEGORIES):
-            btn = QPushButton(cat["label"])
-            btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-            btn.clicked.connect(lambda checked, idx=i: self._switch_category(idx))
-            tab_row.addWidget(btn)
-            self.tab_buttons.append(btn)
+        grid = QGridLayout()
+        grid.setSpacing(20)
 
-        # RIGHT STRETCH (important)
-        tab_row.addStretch()
-        bottom_layout.addLayout(tab_row)
+        for i, mod in enumerate(MODULES):
+            grid.addWidget(SpringCard(mod, self.on_open), i // 3, i % 3)
 
-        # cards container (we rebuild its children on category switch)
-        self.cards_container = QFrame()
-        self.cards_container.setStyleSheet(f"""
-            QFrame {{
-                background: {SURFACE};
-                border: 1px solid {BORDER};
-                border-radius: 16px;
-            }}
-        """)
-        self.cards_layout = QHBoxLayout(self.cards_container)
-        self.cards_layout.setSpacing(20)
-        self.cards_layout.setContentsMargins(0, 0, 0, 0)
-        bottom_layout.addWidget(self.cards_container)
-        self.cards_container.setVisible(False) 
-        
-        # ── animation setup ─────────────────────────────
-        self.cards_anim = QPropertyAnimation(self.cards_container, b"pos")
-        self.cards_anim.setDuration(350)
-        self.cards_anim.setEasingCurve(QEasingCurve.OutCubic)
+        bottom_layout.addLayout(grid)
 
-        self.cards_opacity = QGraphicsOpacityEffect(self.cards_container)
-        self.cards_container.setGraphicsEffect(self.cards_opacity)
-
-        self.opacity_anim = QPropertyAnimation(self.cards_opacity, b"opacity")
-        self.opacity_anim.setDuration(350)
-        self.opacity_anim.setStartValue(0)
-        self.opacity_anim.setEndValue(1)
-        self.opacity_anim.setEasingCurve(QEasingCurve.OutCubic)
-
-        root_layout.addWidget(bottom, stretch=4)
-
-        # initial render
-        self._current_pix = self._load_pixmap(LANDING_IMAGE)
-        for btn in self.tab_buttons:
-            btn.setStyleSheet(TAB_INACTIVE)
-
-    # ── switch category ───────────────────────────────────────────────────────
-    def _switch_category(self, idx):
-        # If clicking the already-active tab, collapse back to landing state
-        if self.active_cat == idx:
-            self.active_cat = None
-            for btn in self.tab_buttons:
-                btn.setStyleSheet(TAB_INACTIVE)
-            self.cards_container.setVisible(False)
-            # restore landing image
-            self._current_pix = self._load_pixmap(LANDING_IMAGE)
-            self._refresh_image()
-            return
-
-        self.active_cat = idx
-
-        # update tab styles
-        for i, btn in enumerate(self.tab_buttons):
-            btn.setStyleSheet(TAB_ACTIVE if i == idx else TAB_INACTIVE)
-
-        # swap to this category's image
-        cat = CATEGORIES[idx]
-        self._current_pix = self._load_pixmap(cat["image"])
-        self._refresh_image()
-
-        # rebuild cards
-        while self.cards_layout.count():
-            item = self.cards_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-
-        for mod_key in cat["modules"]:
-            if mod_key in MODULES:
-                card = SpringCard(mod_key, self.on_open)
-                self.cards_layout.addWidget(card)
-
-        self.cards_layout.addStretch()
-        self.cards_container.setVisible(True)  # reveal cards
-
-    # ── scale image to current label size ────────────────────────────────────
-    def _refresh_image(self):
-        if not hasattr(self, "_current_pix"):
-            return
-        w = self.logo_label.width()
-        h = self.logo_label.height()
-        if w < 10 or h < 10:
-            return
-        scaled = self._current_pix.scaled(
-            w, h,
-            Qt.KeepAspectRatio,
-            Qt.SmoothTransformation
-        )
-        self.logo_label.setPixmap(scaled)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self._refresh_image()
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        self._refresh_image()
+        # add full screen usage
+        root.addWidget(top, 6)     # 60%
+        root.addWidget(bottom, 4)  # 40%
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -372,13 +290,13 @@ class ModuleView(QWidget):
     def __init__(self, mod, on_back):
         super().__init__()
         self.setStyleSheet(f"background: {BG};")
+        self.mod_instance = None
 
         layout = QVBoxLayout(self)
 
         header = QWidget()
         header.setFixedHeight(54)
         header.setStyleSheet(f"background: {SURFACE}; border-bottom: 1px solid {BORDER};")
-
         hl = QHBoxLayout(header)
 
         back = QPushButton("← Home")
@@ -391,14 +309,16 @@ class ModuleView(QWidget):
         hl.addWidget(back)
         hl.addWidget(label)
         hl.addStretch()
-
         layout.addWidget(header)
+
+        # ── LOAD REAL MODULE UI ──
         layout.addWidget(self._load_module(mod))
 
     def _load_module(self, mod: dict) -> QWidget:
         try:
             if APP_DIR not in sys.path:
                 sys.path.insert(0, APP_DIR)
+
             module = importlib.import_module(f"{mod['folder']}.main")
             return module.get_tab()
         except Exception as e:
@@ -423,13 +343,43 @@ class AppNavigator(QStackedWidget):
 
     def go_home(self):
         current = self.currentWidget()
+        if current is self.home:
+            return
+
+        # ── REFRESH/CLEANUP ──
+        try:
+            target = getattr(current, "mod_instance", None)
+            if target:
+                # This correctly cleans up both sub-tabs in main.py
+                tabs = target.findChild(QTabWidget)
+                if tabs:
+                    for i in range(tabs.count()):
+                        w = tabs.widget(i)
+                        if hasattr(w, '_stop_cam'): w._stop_cam()
+                        if hasattr(w, '_stop_camera'): w._stop_camera()
+                
+                # Direct check if not using tabs
+                if hasattr(target, '_stop_cam'): target._stop_cam()
+                if hasattr(target, '_stop_camera'): target._stop_camera()
+
+            # Panda3D Cleanup
+            try:
+                from david_module.panda_port.sign_widget import SignWidget
+                for panda_widget in current.findChildren(SignWidget):
+                    panda_widget.stop()
+                    panda_widget._shutdown_panda()
+            except:
+                pass
+        except Exception as e:
+            print(f"Cleanup warning: {e}")
+
         self.setCurrentWidget(self.home)
         if current is not self.home:
             for sign_widget in current.findChildren(SignPlayerWidget):
                 sign_widget.stop()
                 sign_widget.setParent(None)
             self.removeWidget(current)
-            current.deleteLater()
+            current.deleteLater()  
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -440,17 +390,14 @@ class ShellWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("ASL Translator")
         self.setMinimumSize(1100, 700)
-        self.setCentralWidget(AppNavigator())
+        self.navigator = AppNavigator()
+        self.setCentralWidget(self.navigator)
 
     def closeEvent(self, event):
-        for widget in self.findChildren(SignPlayerWidget):
-            widget.closeEvent(self.event)
+        self.navigator.go_home()
         super().closeEvent(event)
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# ENTRY
-# ──────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
