@@ -1,0 +1,5 @@
+{
+    "dataset_path": "dataSet",
+    "save_dir": "savedVideoPoints",
+    "csv_dir": "dataSet/david-dataset/animations"
+}

@@ -5,10 +5,10 @@ mp_env/
 .venv/
 .env/
 myenv/
+pySideEnv/
 
 # Datasets
 dataSet/kily-dataset/*
-dataSet/david-dataset/*
 
 # Build output (setup.sh rebuilds these)
 dist/
