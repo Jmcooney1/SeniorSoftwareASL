@@ -18,6 +18,9 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 
+from david_module.sign_player import SignPlayerWidget
+
+
 
 
 class QuizInputWidget(QWidget):
@@ -46,6 +49,12 @@ class QuizInputWidget(QWidget):
 
         main_layout.addWidget(self.model_box)
 
+        self.start_embedding_button = QPushButton("Start Embedding")
+        self.stop_embedding_button = QPushButton("Stop Embedding")
+        self.start_embedding_button.clicked.connect(self.start_embedding)
+        self.stop_embedding_button.clicked.connect(self.stop_embedding)
+
+
         # Question label
         self.question_label = QLabel("Question: What sign is this?")
         self.question_label.setStyleSheet("font-size: 16px;")
@@ -66,6 +75,8 @@ class QuizInputWidget(QWidget):
     def check_answer(self):
         answer = self.answer_input.text()
         print("User answer:", answer)
+
+    
 
 
 

@@ -43,6 +43,12 @@ CATEGORIES = [
         "image":   "games_banner.png",        # assets/games_banner.png  ← add your image here
         "modules": ["drews_module"],
     },
+    {
+        "folder": "jace_cooney_minigames",
+        "name": "Hangman",
+        "emoji": "🎮",
+        "description": "Play fun ASL-themed games to practice your skills.",
+    }
 ]
 LANDING_IMAGE = "home_banner.png"
 
