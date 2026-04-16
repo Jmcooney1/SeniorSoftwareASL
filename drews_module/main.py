@@ -1,7 +1,7 @@
 """
 drews_module/main.py
 Exposes get_tab() -> QWidget for the root launcher.
-Contains two sub-tabs: ASL Letter Quiz and Face Mask / Hand Tracking.
+Shows the ASL Letter Quiz directly — no inner tabs.
 No tkinter anywhere.
 """
 import os
@@ -10,7 +10,7 @@ import random
 import io
 
 from PySide6.QtWidgets import (
-    QWidget, QTabWidget, QVBoxLayout, QHBoxLayout,
+    QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QMessageBox, QSizePolicy
 )
 from PySide6.QtCore import Qt, QThread, Signal, QTimer
@@ -62,7 +62,6 @@ def _btn(bg, fg, hover, press, border="none"):
 BTN_PRIMARY = _btn("#2563eb", "white", "#1d4ed8", "#1e40af")
 BTN_DANGER  = _btn("#dc2626", "white", "#b91c1c", "#991b1b")
 
-# Used for general buttons (e.g. Restart) — has padding
 BTN_GHOST = """
     QPushButton {
         background: #f1f5f9;
@@ -78,7 +77,6 @@ BTN_GHOST = """
     QPushButton:disabled { background: #f8fafc; color: #94a3b8; border-color: #e2e8f0; }
 """
 
-# Used specifically for the 42×42 letter grid — no padding so letter is centered
 BTN_LETTER = """
     QPushButton {
         background: #f1f5f9;
@@ -116,7 +114,7 @@ BTN_LETTER_WRONG = """
 
 
 # ════════════════════════════════════════════════════════════════════════════
-#  ASL Letter Quiz tab
+#  ASL Letter Quiz
 # ════════════════════════════════════════════════════════════════════════════
 IMG_SIZE = (300, 300)
 
@@ -191,7 +189,7 @@ class QuizTab(QWidget):
         # ── A–Z letter grid (two rows of 13) ────────────────────────────
         self.letter_buttons: dict[str, QPushButton] = {}
         for row_letters in [
-            [chr(i) for i in range(ord('A'), ord('N'))],    # A–M
+            [chr(i) for i in range(ord('A'), ord('N'))],     # A–M
             [chr(i) for i in range(ord('N'), ord('Z') + 1)], # N–Z
         ]:
             row = QHBoxLayout()
@@ -301,125 +299,8 @@ class QuizTab(QWidget):
 
 
 # ════════════════════════════════════════════════════════════════════════════
-#  Face Mask tab
+#  Entry point
 # ════════════════════════════════════════════════════════════════════════════
-class FaceMaskThread(QThread):
-    error    = Signal(str)
-    finished = Signal()
-
-    def run(self):
-        try:
-            from drews_module.faceMask import run
-            run()
-        except Exception as e:
-            self.error.emit(str(e))
-        finally:
-            self.finished.emit()
-
-
-class FaceMaskTab(QWidget):
-    def __init__(self):
-        super().__init__()
-        self._thread = None
-        self._build_ui()
-
-    def _build_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(60, 60, 60, 60)
-        layout.setSpacing(20)
-        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        icon = QLabel("😷")
-        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon.setStyleSheet("font-size: 64px;")
-        layout.addWidget(icon)
-
-        title = QLabel("Face Mask & Hand Tracking")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title.setStyleSheet("font-size: 20px; font-weight: bold; color: #1e293b;")
-        layout.addWidget(title)
-
-        desc = QLabel(
-            "Opens your webcam and overlays a face mask with hand landmark tracking.\n"
-            "Press  Esc  inside the camera window to stop."
-        )
-        desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        desc.setWordWrap(True)
-        desc.setStyleSheet("font-size: 13px; color: #64748b;")
-        layout.addWidget(desc)
-
-        self.start_btn = QPushButton("▶  Start Camera")
-        self.start_btn.setStyleSheet(BTN_PRIMARY)
-        self.start_btn.setFixedWidth(200)
-        self.start_btn.clicked.connect(self._start)
-        layout.addWidget(self.start_btn, alignment=Qt.AlignmentFlag.AlignHCenter)
-
-        self.stop_btn = QPushButton("⏹  Stop")
-        self.stop_btn.setStyleSheet(BTN_DANGER)
-        self.stop_btn.setFixedWidth(200)
-        self.stop_btn.setEnabled(False)
-        self.stop_btn.clicked.connect(self._remind_stop)
-        layout.addWidget(self.stop_btn, alignment=Qt.AlignmentFlag.AlignHCenter)
-
-        self.status_label = QLabel("")
-        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.status_label.setStyleSheet("font-size: 12px; color: #64748b;")
-        layout.addWidget(self.status_label)
-
-    def _start(self):
-        if self._thread and self._thread.isRunning():
-            return
-        self._thread = FaceMaskThread()
-        self._thread.error.connect(lambda msg: QMessageBox.critical(self, "Error", msg))
-        self._thread.finished.connect(self._on_done)
-        self._thread.start()
-        self.start_btn.setEnabled(False)
-        self.stop_btn.setEnabled(True)
-        self.status_label.setText("Camera running — press Esc in the camera window to stop.")
-
-    def _remind_stop(self):
-        self.status_label.setText("Press  Esc  inside the camera window to close it.")
-
-    def _on_done(self):
-        self.start_btn.setEnabled(True)
-        self.stop_btn.setEnabled(False)
-        self.status_label.setText("Camera stopped.")
-
-
-# ════════════════════════════════════════════════════════════════════════════
-#  Drew's module container widget  +  get_tab() entry point
-# ════════════════════════════════════════════════════════════════════════════
-class DrewsWidget(QWidget):
-    """Inner tab widget holding Quiz and Face Mask sub-tabs."""
-    def __init__(self):
-        super().__init__()
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-
-        inner_tabs = QTabWidget()
-        inner_tabs.setStyleSheet("""
-            QTabWidget::pane { border: none; background: #f8fafc; }
-            QTabBar::tab {
-                background: #f1f5f9;
-                color: #334155;
-                padding: 8px 18px;
-                font-size: 12px;
-                font-weight: bold;
-                border: none;
-                border-bottom: 2px solid transparent;
-            }
-            QTabBar::tab:selected  {
-                color: #2563eb;
-                border-bottom: 2px solid #2563eb;
-                background: white;
-            }
-            QTabBar::tab:hover:!selected { background: #e8eef5; color: #1e293b; }
-        """)
-        inner_tabs.addTab(QuizTab(DATA_DIR), "🤟  ASL Letter Quiz")
-        inner_tabs.addTab(FaceMaskTab(),      "😷  Face Mask")
-        layout.addWidget(inner_tabs)
-
-
 def get_tab() -> QWidget:
-    """Called by the root launcher — returns this module's tab content."""
-    return DrewsWidget()
+    """Called by the root launcher — returns the ASL Letter Quiz directly."""
+    return QuizTab(DATA_DIR)

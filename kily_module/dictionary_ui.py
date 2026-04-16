@@ -16,14 +16,14 @@ from PySide6.QtWidgets import (
 )
 
 from kily_module.main import LANDMARK_FOLDER
-from dataSet.david_dataset.csvPoses import CSVPoses
+from dataSet.david_dataset.cvsPoseDataSet import CVSPoseDataSet
 from david_module.sign_player import SignPlayerWidget
 
 
 class TranslatorWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._dataset: CSVPoses | None = None
+        self._dataset: CVSPoseDataSet | None = None
 
         self._build_ui()
         self._apply_theme()
@@ -34,14 +34,14 @@ class TranslatorWidget(QWidget):
     # ------------------------------------------------------------------
 
     def _load_dataset(self):
-        """Load CSVPoses from the landmark folder supplied by main.py."""
+        """Load CVSPoseDataSet from the landmark folder supplied by main.py."""
         try:
             # Point at the world-pose subfolder — same place csv_animation.py uses
             world_pose_dir = os.path.join(LANDMARK_FOLDER, "world_pose")
             if not os.path.isdir(world_pose_dir):
                 world_pose_dir = LANDMARK_FOLDER  # fallback to root landmark folder
 
-            self._dataset = CSVPoses(dataset_path=world_pose_dir)
+            self._dataset = CVSPoseDataSet(dataset_path=world_pose_dir)
             self._dataset.build_dictionary()
 
             n = len(self._dataset.name_to_csv)

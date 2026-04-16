@@ -1,52 +1,51 @@
-"""
-google_module/main.py
-Exposes get_tab() -> QWidget for the root launcher.
-Contains two sub-tabs: Live Predictor and Motion Trainer.
-"""
-
+import importlib
 import os
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QTabWidget
-
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-
+from . import predictor
+from . import trainer
 
 def get_tab() -> QWidget:
-    from .predictor import PredictorWidget  # ← relative import (was google_module.predictor)
-    from .trainer import TrainerWidget       # ← relative import (was google_module.trainer)
+    # 1. Keep your Refresh Engine - it's necessary for code changes
+    importlib.reload(predictor)
+    importlib.reload(trainer)
 
     wrapper = QWidget()
     layout = QVBoxLayout(wrapper)
     layout.setContentsMargins(0, 0, 0, 0)
-    layout.setSpacing(0)
 
     tabs = QTabWidget()
-    tabs.setStyleSheet("""
-        QTabWidget::pane {
-            border: none;
-            background: #0f172a;
-        }
-        QTabBar::tab {
-            background: #1e293b;
-            color: #64748b;
-            padding: 8px 20px;
-            font-size: 13px;
-            font-weight: bold;
-            border: none;
-            border-bottom: 2px solid transparent;
-        }
-        QTabBar::tab:selected {
-            background: #0f172a;
-            color: #38bdf8;
-            border-bottom: 2px solid #38bdf8;
-        }
-        QTabBar::tab:hover:!selected {
-            background: #334155;
-            color: #cbd5e1;
-        }
-    """)
+    
+    # 2. Add your original cool styling here (Optional, but keeps it looking good)
+    tabs.setStyleSheet("QTabBar::tab { padding: 12px; font-weight: bold; }")
 
-    tabs.addTab(PredictorWidget(), "🤖  Live Predictor")
-    tabs.addTab(TrainerWidget(), "🎯  Motion Trainer")
+    # 3. Instantiate the widgets
+    pred_widget = predictor.PredictorWidget()
+    train_widget = trainer.TrainerWidget()
 
+    tabs.addTab(pred_widget, "🤖  Live Predictor")
+    tabs.addTab(train_widget, "🎯  Motion Trainer")
+
+    # 4. THE FIX: Logic to handle data refresh and camera safety
+    def handle_tab_change(index):
+        if index == 0:
+            # Moving to Predictor: 
+            # FIRST: Kill Trainer camera so Predictor can have it
+            if hasattr(train_widget, '_stop_camera'): 
+                train_widget._stop_camera()
+            
+            # SECOND: Force Predictor to re-read the .npy file right now
+            # This is the "magic" line that makes the refresh work
+            if hasattr(pred_widget, 'library'):
+                pred_widget.library = pred_widget._load_library()
+                if hasattr(pred_widget, 'status_bar'):
+                    pred_widget.status_bar.setText(f"Library: {len(pred_widget.library)} gestures")
+                    
+        else:
+            # Moving to Trainer: Kill Predictor camera
+            if hasattr(pred_widget, '_stop_cam'): 
+                pred_widget._stop_cam()
+
+    tabs.currentChanged.connect(handle_tab_change)
+    
     layout.addWidget(tabs)
     return wrapper

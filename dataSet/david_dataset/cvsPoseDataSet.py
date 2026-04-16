@@ -2,7 +2,7 @@ import os
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 landmarkPath = os.path.join(APP_DIR, "landmark")
-class CSVPoses:
+class CVSPoseDataSet:
 
     def __init__(self, dataset_path: str | None = None):
         if dataset_path is None:
