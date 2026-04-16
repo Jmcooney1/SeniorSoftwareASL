@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
     QApplication, QWidget, QMainWindow,
     QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QPushButton, QStackedWidget, QFrame,
-    QGraphicsDropShadowEffect
+    QGraphicsDropShadowEffect, QTabWidget
 )
 from PySide6.QtCore import Qt, QPropertyAnimation, QEasingCurve, QSize
 from PySide6.QtGui import QFont, QCursor, QMovie, QPixmap
@@ -130,15 +130,15 @@ class SpringCard(QFrame):
         layout.setContentsMargins(22, 22, 22, 18)
 
         emoji = QLabel(self.mod["emoji"])
-        emoji.setStyleSheet("font-size: 32px;")
+        emoji.setStyleSheet("font-size: 32px; border: none;")
         layout.addWidget(emoji)
 
         name = QLabel(self.mod["name"])
-        name.setStyleSheet(f"color: {TEXT_PRI}; font-weight: bold;")
+        name.setStyleSheet(f"color: {TEXT_PRI}; font-weight: bold; border: none;")
         layout.addWidget(name)
 
         desc = QLabel(self.mod["description"])
-        desc.setStyleSheet(f"color: {TEXT_SEC}; font-size: 12px;")
+        desc.setStyleSheet(f"color: {TEXT_SEC}; font-size: 12px; border: none;")
         desc.setWordWrap(True)
         layout.addWidget(desc)
 
@@ -171,7 +171,7 @@ class SpringCard(QFrame):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# HOME SCREEN (FULL SCREEN + 60/40 SPLIT)
+# HOME SCREEN
 # ──────────────────────────────────────────────────────────────────────────────
 class HomeScreen(QWidget):
     def __init__(self, on_open):
@@ -185,23 +185,19 @@ class HomeScreen(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        # ── TOP 60% (LOGO LAYER) ─────────────────────────────
         top = QWidget()
         top.setStyleSheet(f"background: {BG};")
-
         top_layout = QVBoxLayout(top)
         top_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        img_path = os.path.join(APP_DIR, "assets", "video_full.png")  # FIX: removed duplicate line
-
+        img_path = os.path.join(APP_DIR, "assets", "video_full.png")
         logo = QLabel()
         logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         if os.path.exists(img_path):
             pix = QPixmap(img_path)
-
             pix = pix.scaled(600, 500, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            logo.setPixmap(pix)  # FIX: was missing — pixmap was scaled but never applied to the label
+            logo.setPixmap(pix)
         else:
             fallback = QPixmap(os.path.join(APP_DIR,"assets","logo.png"))
             fallback = fallback.scaled(700, 700, Qt.KeepAspectRatio, Qt.SmoothTransformation)
@@ -209,15 +205,13 @@ class HomeScreen(QWidget):
 
         top_layout.addWidget(logo, alignment=Qt.AlignmentFlag.AlignCenter)
 
-        # ── BOTTOM 40% ─────────────────────────────
         bottom = QWidget()
         bottom.setStyleSheet(f"background: {BG};")
-
         bottom_layout = QVBoxLayout(bottom)
         bottom_layout.setContentsMargins(40, 10, 40, 40)
 
         title = QLabel("Choose a tool")
-        title.setStyleSheet(f"font-size: 24px; color: {TEXT_PRI};")
+        title.setStyleSheet(f"font-size: 24px; color: {TEXT_PRI}; font-weight: bold;")
         bottom_layout.addWidget(title)
 
         sub = QLabel("Select a module below to get started.")
@@ -226,15 +220,12 @@ class HomeScreen(QWidget):
 
         grid = QGridLayout()
         grid.setSpacing(20)
-
         for i, mod in enumerate(MODULES):
             grid.addWidget(SpringCard(mod, self.on_open), i // 3, i % 3)
 
         bottom_layout.addLayout(grid)
-
-        # add full screen usage
-        root.addWidget(top, 6)     # 60%
-        root.addWidget(bottom, 4)  # 40%
+        root.addWidget(top, 6)
+        root.addWidget(bottom, 4)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -244,14 +235,13 @@ class ModuleView(QWidget):
     def __init__(self, mod, on_back):
         super().__init__()
         self.setStyleSheet(f"background: {BG};")
+        self.mod_instance = None
 
         layout = QVBoxLayout(self)
 
-        # ── header ──
         header = QWidget()
         header.setFixedHeight(54)
         header.setStyleSheet(f"background: {SURFACE}; border-bottom: 1px solid {BORDER};")
-
         hl = QHBoxLayout(header)
 
         back = QPushButton("← Home")
@@ -264,18 +254,23 @@ class ModuleView(QWidget):
         hl.addWidget(back)
         hl.addWidget(label)
         hl.addStretch()
-
         layout.addWidget(header)
 
-        # ── LOAD REAL MODULE UI ──
-        layout.addWidget(self._load_module(mod))
+        self.mod_instance = self._load_module(mod)
+        layout.addWidget(self.mod_instance)
 
     def _load_module(self, mod: dict) -> QWidget:
         try:
             if APP_DIR not in sys.path:
                 sys.path.insert(0, APP_DIR)
 
-            module = importlib.import_module(f"{mod['folder']}.main")
+            # Fix: Always load izzy_module/main.py which contains your sub-tabs
+            module_name = f"{mod['folder']}.main"
+            module = importlib.import_module(module_name)
+            
+            # The REFRESH logic
+            importlib.reload(module) 
+            
             return module.get_tab()
 
         except Exception as e:
@@ -300,13 +295,39 @@ class AppNavigator(QStackedWidget):
 
     def go_home(self):
         current = self.currentWidget()
+        if current is self.home:
+            return
+
+        # ── REFRESH/CLEANUP ──
+        try:
+            target = getattr(current, "mod_instance", None)
+            if target:
+                # This correctly cleans up both sub-tabs in main.py
+                tabs = target.findChild(QTabWidget)
+                if tabs:
+                    for i in range(tabs.count()):
+                        w = tabs.widget(i)
+                        if hasattr(w, '_stop_cam'): w._stop_cam()
+                        if hasattr(w, '_stop_camera'): w._stop_camera()
+                
+                # Direct check if not using tabs
+                if hasattr(target, '_stop_cam'): target._stop_cam()
+                if hasattr(target, '_stop_camera'): target._stop_camera()
+
+            # Panda3D Cleanup
+            try:
+                from david_module.panda_port.sign_widget import SignWidget
+                for panda_widget in current.findChildren(SignWidget):
+                    panda_widget.stop()
+                    panda_widget._shutdown_panda()
+            except:
+                pass
+        except Exception as e:
+            print(f"Cleanup warning: {e}")
+
         self.setCurrentWidget(self.home)
-        if current is not self.home:
-            for sign_widget in current.findChildren(SignPlayerWidget):
-                sign_widget.stop()
-                sign_widget.setParent(None)
-            self.removeWidget(current)
-            current.deleteLater()  
+        self.removeWidget(current)
+        current.deleteLater() 
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -317,17 +338,14 @@ class ShellWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("ASL Translator")
         self.setMinimumSize(1100, 700)
-        self.setCentralWidget(AppNavigator())
+        self.navigator = AppNavigator()
+        self.setCentralWidget(self.navigator)
 
     def closeEvent(self, event):
-        for widget in self.findChildren(SignPlayerWidget):
-            widget.closeEvent(self.event)
+        self.navigator.go_home()
         super().closeEvent(event)
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# ENTRY
-# ──────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
