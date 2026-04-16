@@ -9,6 +9,9 @@ pySideEnv/
 
 # Dataset (too large for git)
 dataSet/kily_dataset/*
+dataSet/david_dataset/Landmarks/*
+dataSet/david_dataset/**/*.csv
+!dataSet/david_dataset/cvsPoseDataSet.py
 
 
 # Build output (setup.sh rebuilds these)
