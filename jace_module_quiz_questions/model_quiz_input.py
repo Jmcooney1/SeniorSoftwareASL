@@ -2,21 +2,11 @@ import os
 import sys
 import random
 
-from PyQt6.QtWidgets import (
-    QApplication, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLabel, QMessageBox, QSizePolicy, QFrame,
-    QStackedWidget
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtWidgets import (
+    QApplication, QFrame, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
+    QPushButton, QVBoxLayout, QWidget,
 )
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QPixmap
-
-import sys
-
-from PyQt6.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QLabel,
-    QFrame, QLineEdit, QPushButton
-)
-from PyQt6.QtCore import Qt
 
 from david_module.sign_player import SignPlayerWidget
 
