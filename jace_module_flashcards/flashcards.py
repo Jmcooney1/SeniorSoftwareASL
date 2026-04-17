@@ -22,7 +22,7 @@ DATASET_PATH = os.path.join(
 
 IMG_SIZE = (256, 256)
 
-class FlashcardsTab(QWidget):
+class FlashcardsGame(QWidget):
     def __init__(self):
         super().__init__()
 
@@ -156,7 +156,7 @@ class FlashCardWidget(QWidget):
         layout.addWidget(label)
 
         inner_tabs = QTabWidget()
-        inner_tabs.addTab(FlashcardsTab(), "Flashcards")
+        inner_tabs.addTab(FlashcardsGame(), "Flashcards")
         layout.addWidget(inner_tabs)
 
 

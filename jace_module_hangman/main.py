@@ -2,9 +2,9 @@
 
 from PySide6.QtWidgets import QWidget
 
-from jace_module_flashcards.flashcards import FlashcardsGame
+from jace_module_hangman.hangman_minigame import HangmanGame
 
 
 def get_tab() -> QWidget:
     """Called by ``launcher.ModuleView`` — returns this module's tab content."""
-    return FlashcardsGame()
+    return HangmanGame()

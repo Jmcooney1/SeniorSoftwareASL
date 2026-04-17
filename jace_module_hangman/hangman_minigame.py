@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QPixmap
 
-base_dir   = os.path.dirname(os.path.abspath(__file__))   # jace_cooney_minigames/
+base_dir   = os.path.dirname(os.path.abspath(__file__))   # jace_module_hangman/
 parent_dir = os.path.dirname(base_dir)                     # seniorsoftwareASL/
 GOOGLE_DIR = os.path.join(parent_dir, 'izzy_module', 'googleMedaPipe')
 
@@ -21,7 +21,7 @@ sys.path.insert(0, parent_dir)
 asl_library = np.load(os.path.join(GOOGLE_DIR, 'asl_library.npy'), allow_pickle=True).item()
 asl_motion_library = np.load(os.path.join(GOOGLE_DIR, 'asl_motion_library.npy'), allow_pickle=True).item()
 
-class HangmanTab(QWidget):
+class HangmanGame(QWidget):
     BRIDGE_FILE = '/tmp/asl_detected_letter.txt'
 
     def accuracy_test(self):
@@ -177,7 +177,7 @@ class HangmanTab(QWidget):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    window = HangmanTab()
+    window = HangmanGame()
     window.resize(700, 600)
     window.show()
     sys.exit(app.exec())
