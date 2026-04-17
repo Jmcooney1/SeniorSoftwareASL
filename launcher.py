@@ -27,7 +27,7 @@ MODULES = {
     "kily_module":  {"name": "Sign Player",         "emoji": "🤟", "description": "Watch a 3D character perform ASL signs."},
     "izzy_module":  {"name": "Skeleton Translator", "emoji": "🦴", "description": "Extract skeleton keypoints from video and project motion data."},
     "drews_module": {"name": "Translation Quiz",    "emoji": "📝", "description": "Test your ASL knowledge with an interactive translation quiz."},
-    "jace_module_quiz": {"name": "Sign Quiz",   "emoji": "❓", "description": "Watch a sign and type what you think it means."},
+    "jace_module_quiz": {"name": "Sign Quiz",   "emoji": "❓", "description": "Watch a sign and guess what it means."},
 }
 
 # ── Categories ────────────────────────────────────────────────────────────────
