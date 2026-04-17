@@ -45,11 +45,11 @@ CATEGORIES = [
         "modules": ["drews_module", "jace_module_quiz"],
     },
     {
-        "folder": "jace_cooney_minigames",
-        "name": "Hangman",
+        "folder": "jace_module_flashcards",
+        "name": "Flashcards",
         "emoji": "🎮",
         "description": "Play fun ASL-themed games to practice your skills.",
-    }
+    },
 ]
 LANDING_IMAGE = "home_banner.png"
 
