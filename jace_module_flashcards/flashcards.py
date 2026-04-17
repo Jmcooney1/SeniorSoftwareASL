@@ -16,13 +16,13 @@ PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
 DATASET_PATH = os.path.join(
     PROJECT_ROOT,
     "dataSet",
-    "drew-dataset",
+    "drew_dataset",
     "asl_letters"
 )
 
 IMG_SIZE = (256, 256)
 
-class FlashcardsGame(QWidget):
+class Flashcards(QWidget):
     def __init__(self):
         super().__init__()
 

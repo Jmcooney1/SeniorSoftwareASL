@@ -1,1 +1,1 @@
-#jace_module_flashcards/__init__.py
+#jace_module_Flashcards/__init__.py

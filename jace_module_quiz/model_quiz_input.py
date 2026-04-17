@@ -19,7 +19,7 @@ def _available_signs():
         return []
 
 
-class QuizInputWidget(QWidget):
+class GuesstheSign(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Quiz Input")
@@ -75,6 +75,7 @@ class QuizInputWidget(QWidget):
             QMessageBox.information(self, "Correct!", f"Correct! The sign was '{self._current_sign_name}'.")
         else:
             QMessageBox.warning(self, "Incorrect", f"Incorrect. The correct answer was '{self._current_sign_name}'.")
+            self.next_button.click()  # Automatically move to the next sign after an incorrect answer.
 
     
 

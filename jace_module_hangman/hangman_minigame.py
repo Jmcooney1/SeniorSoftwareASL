@@ -21,7 +21,7 @@ sys.path.insert(0, parent_dir)
 asl_library = np.load(os.path.join(GOOGLE_DIR, 'asl_library.npy'), allow_pickle=True).item()
 asl_motion_library = np.load(os.path.join(GOOGLE_DIR, 'asl_motion_library.npy'), allow_pickle=True).item()
 
-class HangmanGame(QWidget):
+class HangmanMiniGame(QWidget):
     BRIDGE_FILE = '/tmp/asl_detected_letter.txt'
 
     def accuracy_test(self):
@@ -55,7 +55,7 @@ class HangmanGame(QWidget):
     def __init__(self):
         super().__init__()
 
-        self.word_list = ["BIRD", "CAT", "HELLO", "SILLY GOOSE"]
+        self.word_list = ["BIRD", "CAT", "HELLO", "SILLY GOOSE","HANGMAN","ASL"]
         self.max_attempts = 8
 
         self.current_word = ""

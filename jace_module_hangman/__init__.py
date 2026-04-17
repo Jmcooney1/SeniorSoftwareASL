@@ -1,1 +1,1 @@
-#jace_module_minigames/__init__.py
+#jace_module_hangman/__init__.py

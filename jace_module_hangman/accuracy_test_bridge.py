@@ -23,6 +23,7 @@ BRIDGE_FILE = '/tmp/asl_detected_letter.txt'  # shared communication file
 while cap.isOpened():
     success, frame = cap.read()
     if not success:
+        print("Ignoring empty camera frame.")
         break
 
     frame = cv2.flip(frame, 1)

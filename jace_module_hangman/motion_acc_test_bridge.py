@@ -11,7 +11,7 @@ THRESHOLD = 1500
 BRIDGE_FILE = '/tmp/asl_detected_letter.txt'
 
 if not os.path.exists(MOTION_LIB_PATH):
-    print("❌ Library not found!")
+    print("Library not found!")
     exit()
 
 motion_lib = np.load(MOTION_LIB_PATH, allow_pickle=True).item()
