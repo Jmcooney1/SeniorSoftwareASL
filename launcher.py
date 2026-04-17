@@ -24,9 +24,10 @@ os.makedirs(SAVE_DIR, exist_ok=True)
 
 # ── Modules ───────────────────────────────────────────────────────────────────
 MODULES = {
-    "kily_module":  {"name": "Animation",          "emoji": "🎬", "description": "Create animated ASL signs with our interactive tool."},
+    "kily_module":  {"name": "Sign Player",         "emoji": "🤟", "description": "Watch a 3D character perform ASL signs."},
     "izzy_module":  {"name": "Skeleton Translator", "emoji": "🦴", "description": "Extract skeleton keypoints from video and project motion data."},
     "drews_module": {"name": "Translation Quiz",    "emoji": "📝", "description": "Test your ASL knowledge with an interactive translation quiz."},
+    "jace_module_quiz": {"name": "Sign Quiz",   "emoji": "❓", "description": "Watch a sign and type what you think it means."},
 }
 
 # ── Categories ────────────────────────────────────────────────────────────────
@@ -41,14 +42,8 @@ CATEGORIES = [
     {
         "label":   "Games",
         "image":   "games_banner.png",        # assets/games_banner.png  ← add your image here
-        "modules": ["drews_module"],
+        "modules": ["drews_module", "jace_module_quiz"],
     },
-    {
-        "folder": "jace_cooney_minigames",
-        "name": "Hangman",
-        "emoji": "🎮",
-        "description": "Play fun ASL-themed games to practice your skills.",
-    }
 ]
 LANDING_IMAGE = "home_banner.png"
 
