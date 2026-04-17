@@ -28,21 +28,10 @@ from PySide6.QtGui import QResizeEvent
 
 
 class SignPlayerWidget(QWidget):
-    """Embeds a Panda3D sign animation.  Call ``play(csv_path)`` to start or swap signs.
-
-    Only one widget can hold the embedded Panda3D engine at a time (Panda's
-    ``ShowBase`` is a process singleton).  Calling :meth:`play` on a widget
-    will automatically tear down any other active player first, and the
-    widget cleans itself up when it is hidden or destroyed.  Construction
-    does NOT start Panda — call :meth:`play` to do that.
-    """
+    """Embeds a Panda3D sign animation.  Call ``play(csv_path)`` to start or swap signs."""
 
     # Panda task-manager step interval in milliseconds (~60 fps)
     _STEP_MS = 16
-
-    # Process-wide reference to the widget currently driving Panda3D.
-    # Enforces the single-ShowBase rule across the whole app.
-    _active: "SignPlayerWidget | None" = None
 
     def __init__(self, csv_path: str | None = None, parent: QWidget | None = None):
         super().__init__(parent)
@@ -80,10 +69,6 @@ class SignPlayerWidget(QWidget):
     def play(self, csv_path: str) -> None:
         """Start playing *csv_path*, or hot-swap if already running.
 
-        If a different :class:`SignPlayerWidget` somewhere else in the app
-        currently owns the Panda3D engine, that other widget is stopped
-        first — only one embedded player can be alive at a time.
-
         Parameters
         ----------
         csv_path : str
@@ -95,15 +80,6 @@ class SignPlayerWidget(QWidget):
             # Already running — just swap the clip
             self._swap_clip(csv_path)
             return
-
-        # Another widget owns the Panda3D engine — tear it down before we
-        # try to spin up our own ShowBase (Panda only allows one per process).
-        active = SignPlayerWidget._active
-        if active is not None and active is not self:
-            try:
-                active.stop()
-            except Exception:
-                pass
 
         if self._popout_proc is not None:
             # Kill any existing popout before starting a new one
@@ -130,9 +106,6 @@ class SignPlayerWidget(QWidget):
             self._camera_ctrl = None
             self._debug_viz = None
             self._pose_ctrl = None
-
-        if SignPlayerWidget._active is self:
-            SignPlayerWidget._active = None
 
         self._placeholder.setText("Stopped — select a sign to play again")
         self._placeholder.setStyleSheet("color: #888; font-style: italic;")
@@ -263,9 +236,6 @@ class SignPlayerWidget(QWidget):
         # Hide the placeholder
         self._placeholder.setVisible(False)
 
-        # Claim ownership of the process-wide Panda3D engine.
-        SignPlayerWidget._active = self
-
         # Drive Panda's task manager from a QTimer
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._panda_step)
@@ -295,9 +265,6 @@ class SignPlayerWidget(QWidget):
             [sys.executable, script, csv_path],
             cwd=os.path.dirname(script),
         )
-        # The popout owns the Panda engine for this widget; mirror the
-        # embedded path so a future play() elsewhere can tear it down.
-        SignPlayerWidget._active = self
 
     def _kill_popout(self) -> None:
         if self._popout_proc is not None:
@@ -343,11 +310,3 @@ class SignPlayerWidget(QWidget):
     def closeEvent(self, event) -> None:
         self.stop()
         super().closeEvent(event)
-
-    def hideEvent(self, event) -> None:
-        # If the user navigated away from the page hosting this widget
-        # (e.g. tab switch or back-to-home), release Panda so the next
-        # page that wants it can claim the singleton.
-        if self.is_running:
-            self.stop()
-        super().hideEvent(event)

@@ -1,1 +1,0 @@
-#jace_module_minigames/__init__.py
