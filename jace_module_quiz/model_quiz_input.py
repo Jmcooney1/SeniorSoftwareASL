@@ -68,7 +68,13 @@ class QuizInputWidget(QWidget):
 
     def check_answer(self):
         answer = self.answer_input.text()
-        print("User answer:", answer)
+        if self._current_sign_name is None:
+            QMessageBox.warning(self, "No Sign", "Please play a sign before submitting an answer.")
+            return
+        if answer.strip().lower() == self._current_sign_name.strip().lower():
+            QMessageBox.information(self, "Correct!", f"Correct! The sign was '{self._current_sign_name}'.")
+        else:
+            QMessageBox.warning(self, "Incorrect", f"Incorrect. The correct answer was '{self._current_sign_name}'.")
 
     
 
