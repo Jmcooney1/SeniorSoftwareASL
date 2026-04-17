@@ -43,11 +43,11 @@ MODULES = [
         "description": "Test your ASL knowledge with an interactive translation quiz.",
     },
     {
-        "folder": "jace_cooney_minigames",
-        "name": "Hangman",
+        "folder": "jace_module_flashcards",
+        "name": "Flashcards",
         "emoji": "🎮",
         "description": "Play fun ASL-themed games to practice your skills.",
-    }
+    },
 ]
 
 
