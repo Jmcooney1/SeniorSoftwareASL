@@ -2,7 +2,7 @@
 
 from PySide6.QtWidgets import QWidget
 
-from jace_module_quiz_questions.model_quiz_input import QuizInputWidget
+from jace_module_quiz.model_quiz_input import QuizInputWidget
 
 
 def get_tab() -> QWidget:
