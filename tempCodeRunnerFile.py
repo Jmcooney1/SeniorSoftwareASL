@@ -41,6 +41,12 @@ MODULES = [
         "emoji": "📝",
         "description": "Test your ASL knowledge with an interactive translation quiz.",
     },
+    {
+        "folder": "jace_module_flashcards",
+        "name": "Flashcards",
+        "emoji": "🃏",
+        "description": "Learn ASL vocabulary with interactive flashcards.",
+    }
 ]
 
 

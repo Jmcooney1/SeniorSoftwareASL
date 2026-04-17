@@ -27,6 +27,7 @@ MODULES = {
     "kily_module":  {"name": "Animation",          "emoji": "🎬", "description": "Create animated ASL signs with our interactive tool."},
     "izzy_module":  {"name": "Skeleton Translator", "emoji": "🦴", "description": "Extract skeleton keypoints from video and project motion data."},
     "drews_module": {"name": "Translation Quiz",    "emoji": "📝", "description": "Test your ASL knowledge with an interactive translation quiz."},
+    "jace_module_flashcards":  {"name": "Flashcards", "emoji": "🃏", "description": "Learn ASL vocabulary with interactive flashcards."},
 }
 
 # ── Categories ────────────────────────────────────────────────────────────────
