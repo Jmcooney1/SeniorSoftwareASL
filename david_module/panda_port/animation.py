@@ -100,7 +100,7 @@ def _csv_dir_from_config() -> Path:
 
 CSV_DIR = _csv_dir_from_config()
 CSV_FILENAME_RE = re.compile(r"^SignSchool\s+(.+?)\s+\[(\d+)x(\d+)\]\.csv$")
-DEFAULT_CSV_FPS = 30.0
+DEFAULT_CSV_FPS = 24.0
 
 # Temporal smoothing
 ARM_BLEND_ALPHA = 0.40
