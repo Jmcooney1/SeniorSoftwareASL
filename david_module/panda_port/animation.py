@@ -310,6 +310,24 @@ def _remove_twist_from_offset(offset_q: Quat, twist_axis_parent: Vec3) -> Quat:
     return swing
 
 
+def _extract_twist_from_offset(offset_q: Quat, twist_axis_parent: Vec3) -> Quat:
+    """Return only the twist component of an offset quaternion around a parent-space axis."""
+    axis = _norm(twist_axis_parent)
+    if axis is None:
+        return Quat.identQuat()
+
+    projected = axis * (
+        offset_q.getI() * axis.x
+        + offset_q.getJ() * axis.y
+        + offset_q.getK() * axis.z
+    )
+    twist = Quat(offset_q.getR(), projected.x, projected.y, projected.z)
+    if twist.lengthSquared() <= EPSILON:
+        return Quat.identQuat()
+    twist.normalize()
+    return twist
+
+
 # ---------------------------------------------------------------------------
 # Coordinate helpers
 # ---------------------------------------------------------------------------
@@ -527,6 +545,7 @@ class CSVRigAnimator:
         self._prev_arm_dirs: dict[str, dict[str, Vec3]] = {}
         self._prev_hand_bases: dict[str, tuple[Vec3, Vec3, Vec3]] = {}
         self._prev_hand_quats: dict[str, Quat] = {}
+        self._prev_forearm_twists: dict[str, Quat] = {}
         self._prev_torso: tuple[Vec3, Vec3, Vec3] | None = None
         self._cur_torso: tuple[Vec3, Vec3, Vec3] | None = None
         self._ref_torso: tuple[Vec3, Vec3, Vec3] | None = None
@@ -578,6 +597,7 @@ class CSVRigAnimator:
         self._prev_arm_dirs.clear()
         self._prev_hand_bases.clear()
         self._prev_hand_quats.clear()
+        self._prev_forearm_twists.clear()
         self._prev_torso = None
         self._cur_torso = None
         self._ref_torso = None
@@ -642,9 +662,26 @@ class CSVRigAnimator:
             self._wj(f"DEF-Pinky1.{side}").getPos(self.actor) # type: ignore
             - self._wj(f"DEF-Index1.{side}").getPos(self.actor) # type: ignore
         )
-        # Pinky-Index points in opposite world directions for L vs R,
-        # flipping the palm normal from cross(fwd, across).  Negate for
-        # L so the palm always faces the same way (toward the actual palm).
+        # Left-hand finger-curl direction fix.
+        #
+        # `fwd × across` is chirality-dependent: on the right hand it yields
+        # the back-of-hand normal, but on the left hand it yields the
+        # palm-side normal (the mirrored hand geometry inverts the cross
+        # product).  `_detect_curl_axis` relies on this vector to decide the
+        # sign of positive finger rotation -- specifically `deriv.dot(palm)`
+        # determines whether +curl_angle curls fingers inward or outward.
+        #
+        # Because the rain rig's left-side finger joints have their local
+        # axes mirrored (a standard Blender/Rigify convention), the naive
+        # unflipped palm vector makes L's positive rotation rotate the
+        # fingertips *away* from the palm -- i.e. the fingers bend backward
+        # toward the knuckles / back of the hand instead of curling in.
+        #
+        # Negating `across` on the left side forces the cross product to
+        # agree with the right-hand convention (back-of-hand normal), so the
+        # sign detection yields matching curl_sign values on both sides.
+        # Do NOT remove this without re-deriving curl_sign to handle the
+        # mirrored local axes directly.
         if side == "L":
             across = across * -1.0
         return _build_basis(fwd, across) or (Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1))
@@ -869,7 +906,14 @@ class CSVRigAnimator:
         hand_jn = f"FK-Hand.{side}"
         hand_rest = self._rest_of(hand_jn)
 
-        # Capture forearm frame (pose_world only – no coordinate mixing)
+        # Fix 3 requires the torso reference frame for chirality remapping;
+        # early-return if it's not ready yet (first frame before pose data
+        # has been observed).  The arm chain guards on this separately.
+        if self._ref_torso is None:
+            return
+        cap_torso = self._ref_torso
+
+        # Capture forearm anatomy — raw pose_world directions.
         si = POSE_LEFT_SHOULDER if side == "L" else POSE_RIGHT_SHOULDER
         ei = POSE_LEFT_ELBOW if side == "L" else POSE_RIGHT_ELBOW
         wi = POSE_LEFT_WRIST if side == "L" else POSE_RIGHT_WRIST
@@ -880,17 +924,117 @@ class CSVRigAnimator:
         cap_ua_dir = _norm(s - e)
         if cap_fa_dir is None or cap_ua_dir is None:
             return
-        cap_fa_basis = _build_basis(cap_fa_dir, cap_ua_dir)
-        if cap_fa_basis is None:
+
+        # Fix 3: torso-consistent chirality correction for hand orientation.
+        #
+        # Problem history
+        # ~~~~~~~~~~~~~~~
+        # Capture-space (pose_world after `_pw2rig`) and rig-space differ by
+        # a reflection through the torso XY plane — that's what
+        # ``TORSO_DEPTH_SIGN`` encodes.  `_remap_dir` applies this reflection
+        # correctly for arm direction vectors because it is done in the
+        # torso basis, where the Z axis *is* the depth axis by construction.
+        #
+        # The previous implementation built ``cap_fa_basis`` directly from
+        # raw capture coordinates, projected the hand basis vectors into
+        # that forearm frame, and then applied ``z *= TORSO_DEPTH_SIGN`` to
+        # the forearm-local components.  That flip is only valid if the
+        # forearm basis's Z axis corresponds to the torso depth axis — but
+        # the forearm basis's Z axis is `forearm_dir × upper_arm_perp`,
+        # which rotates arbitrarily with arm configuration.  As the arm
+        # moves, the "depth flip" applied to forearm-local coords becomes a
+        # flip around a random axis, smearing the chirality correction
+        # across the wrist in unpredictable ways.
+        #
+        # Observed symptoms with the blind forearm-Z flip
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        # * "choke" — palm-toward-center orientation reached from the
+        #   front, but side view exposed a persistent radial (thumb-side)
+        #   deviation baked into the wrist.
+        # * "Good, thank you" — skeleton preview showed palm-inward but the
+        #   rig rendered palm-toward-screen.  Capture data was correct; the
+        #   capture→rig transform mis-rotated the hand.
+        # * "binoculars" — palms settled camera-facing rather than
+        #   inward-facing, and the motion axis collapsed to ulnar/radial
+        #   deviation instead of the required flexion/extension.  This is
+        #   exactly what a ~90° error around the forearm axis looks like.
+        #
+        # Fix 3 strategy
+        # ~~~~~~~~~~~~~~
+        # Apply the torso-plane reflection to *every* capture-space vector
+        # (hand basis + forearm-basis constituents) using `_remap_dir`.
+        # After remapping, all inputs live in rig-compatible world space
+        # and share a consistent handedness, so the forearm-local
+        # components of the hand are meaningful and need no further flip.
+        # The resulting hand-to-forearm relative orientation is then
+        # re-expressed in the *actual* rig forearm basis (from current FK
+        # state) so the hand follows the rig even when the arm FK doesn't
+        # perfectly reproduce the captured arm geometry (smoothing, limits).
+        rig_hfwd = self._remap_dir(cap_basis[0], cap_torso)
+        rig_hacross = self._remap_dir(cap_basis[1], cap_torso)
+        rig_fa_dir_from_cap = self._remap_dir(cap_fa_dir, cap_torso)
+        rig_ua_dir_from_cap = self._remap_dir(cap_ua_dir, cap_torso)
+        if (rig_hfwd is None or rig_hacross is None
+                or rig_fa_dir_from_cap is None
+                or rig_ua_dir_from_cap is None):
+            return
+        cap_fa_basis_in_rig = _build_basis(
+            rig_fa_dir_from_cap, rig_ua_dir_from_cap
+        )
+        if cap_fa_basis_in_rig is None:
             return
 
-        # Hand axes in capture forearm frame
-        hfwd_local = _world_to_basis(cap_basis[0], cap_fa_basis)
-        hacross_local = _world_to_basis(cap_basis[1], cap_fa_basis)
-        hfwd_local = Vec3(hfwd_local.x, hfwd_local.y, hfwd_local.z * TORSO_DEPTH_SIGN)
-        hacross_local = Vec3(hacross_local.x, hacross_local.y, hacross_local.z * TORSO_DEPTH_SIGN)
+        # Hand axes in the (rig-compatible) forearm frame.  No axis flip
+        # here — the chirality correction has already been applied above to
+        # both the hand axes and the forearm-basis constituents, so this is
+        # a pure change of basis.
+        hfwd_local = _world_to_basis(rig_hfwd, cap_fa_basis_in_rig)
+        hacross_local = _world_to_basis(rig_hacross, cap_fa_basis_in_rig)
 
-        # Rig forearm frame
+        # Fix 4: carry the palm normal through the transform EXPLICITLY,
+        # because `_remap_dir` is a reflection (det = −1), not a rotation.
+        #
+        # The bug Fix 3 did not catch
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        # Fix 3 mapped `cap_basis[0]` (fwd) and `cap_basis[1]` (across)
+        # through the torso-plane reflection and relied on
+        # `_build_basis(tgt_fwd, tgt_across)` to re-derive the palm normal
+        # as `tgt_fwd × tgt_across`.  But for any reflection R we have
+        #     R(a × b) = −R(a) × R(b)
+        # so the cross-product-derived col2 is the NEGATION of the true
+        # reflected palm normal.  That sign inversion is what drives:
+        #   * "binoculars" — palms end up facing the camera (~180° around
+        #     the forearm from palm-inward); motion appears as ulnar/radial
+        #     deviation because the swing is resolving the flipped target.
+        #   * "Good, thank you" — right palm settles toward-screen despite
+        #     the skeleton preview showing palm-inward (the raw capture is
+        #     correct; only the capture→rig palm-normal sign is wrong).
+        #   * "choke" — smaller visual effect from the front because the
+        #     flipped palm is close to an axis of symmetry, but side view
+        #     reveals the residual radial deviation.
+        #
+        # Fix: compute the palm target by explicitly remapping
+        # `cap_basis[2]` through the same pipeline (torso reflection →
+        # forearm-frame components → rig forearm basis).  The scoring loop
+        # then uses this correctly-signed palm as its alignment target, so
+        # the `cand_across` sign-search converges to the right palm
+        # orientation instead of its 180° mirror.
+        #
+        # Why we need a separate remap rather than just negating tgt_basis[2]:
+        # negating col2 is equivalent here but obscures the reason.  Keeping
+        # an explicit remap of cap_basis[2] documents that the palm normal
+        # is first-class data from the capture (it carries the true palm
+        # direction, independent of any cross-product convention) and must
+        # survive the reflection with its sign preserved.
+        rig_hpalm = self._remap_dir(cap_basis[2], cap_torso)
+        if rig_hpalm is None:
+            return
+        hpalm_local = _world_to_basis(rig_hpalm, cap_fa_basis_in_rig)
+
+        # Rig forearm frame (from *current* FK pose).  See Fix 3 commentary:
+        # using the current rig forearm rather than the capture-derived one
+        # keeps the hand glued to the actual rig forearm when arm FK
+        # diverges from capture geometry.
         fa_jn = f"FK-Forearm.{side}"
         fa_rest = self._rest_of(fa_jn)
         fa_wq = _q(self._wj(fa_jn).getQuat(self.actor)) # type: ignore
@@ -909,7 +1053,9 @@ class CSVRigAnimator:
 
         tgt_fwd = _norm(_basis_to_world(hfwd_local, rig_fa_basis))
         tgt_across = _norm(_basis_to_world(hacross_local, rig_fa_basis))
-        if tgt_fwd is None or tgt_across is None:
+        # Fix 4: independently-derived palm target (sign-correct under reflection).
+        tgt_palm = _norm(_basis_to_world(hpalm_local, rig_fa_basis))
+        if tgt_fwd is None or tgt_across is None or tgt_palm is None:
             return
         tgt_basis = _build_basis(tgt_fwd, tgt_across)
         if tgt_basis is None:
@@ -922,22 +1068,51 @@ class CSVRigAnimator:
         if r0 is None or r1 is None:
             return
 
+        # Fix 2: split offset_q into swing (→ hand joint) and twist (→ forearm joint).
+        #
+        # History:
+        #   Fix 0 (original) — stripped twist entirely: palm orientation lost because
+        #     the arm chain's _rot_between is zero-twist by construction, so
+        #     pronation/supination had nowhere to live.
+        #   Fix 1 — full offset_q on the hand: palm orientation now reached the rig,
+        #     but the hand joint absorbing the full twist caused wrist-mesh "braiding"
+        #     and exaggerated bend during large pronation angles.
+        #   Fix 2 (this) — swing on hand, twist on forearm. Equivalent end-effector
+        #     world orientation by associativity:
+        #         hand_rest * (swing * twist) * fa_local * upperarm_wq
+        #       = hand_rest * swing * (twist * fa_local) * upperarm_wq
+        #     so pre-multiplying the forearm's local quat by twist_q shifts the twist
+        #     up one joint without changing the hand's visible orientation. This spreads
+        #     the twist across more of the arm mesh instead of concentrating it at the
+        #     wrist. Axis for decomposition is forearm.rest_dir_local because offset_q
+        #     is expressed in the forearm's pre-rest local frame.
         twist_axis_parent = _norm(self.arm_ctrls[side]["Forearm"].rest_dir_local) or Vec3(0, 0, 1)
         palm_local = self._hand_basis_in_fk_local[side][2]
         new_q = hand_rest.quat
+        new_twist_q: Quat | None = None
         best_score = -2.0
         for cand_across in (tgt_basis[1], tgt_basis[1] * -1.0):
             delta = _rot_from_basis(r0, r1, tgt_basis[0], cand_across)
             full_q = rest_wq * delta * parent_wq.conjugate()
             offset_q = hand_rest.quat.conjugate() * full_q
             swing_q = _remove_twist_from_offset(offset_q, twist_axis_parent)
-            cand_q = hand_rest.quat * swing_q
-            cand_world_q = cand_q * parent_wq
+            twist_q = _extract_twist_from_offset(offset_q, twist_axis_parent)
+            # Score with the full offset — final world orientation of the hand is
+            # identical whether offset_q sits on the hand alone or is split between
+            # hand (swing) and forearm (twist).
+            cand_full_q = hand_rest.quat * offset_q
+            cand_world_q = cand_full_q * parent_wq
             cand_palm = _norm(cand_world_q.xform(palm_local))
-            score = cand_palm.dot(tgt_basis[2]) if cand_palm is not None else -1.0
+            # Fix 4: score against the explicitly-remapped palm normal
+            # (tgt_palm), NOT tgt_basis[2] = tgt_fwd × tgt_across.  Under
+            # the torso-plane reflection the cross-product col2 is the
+            # negation of the true reflected palm, so using it here sent
+            # the sign-search toward the mirror-image palm orientation.
+            score = cand_palm.dot(tgt_palm) if cand_palm is not None else -1.0
             if score > best_score:
                 best_score = score
-                new_q = cand_q
+                new_q = hand_rest.quat * swing_q
+                new_twist_q = twist_q
 
         # Temporal smoothing with outlier rejection
         prev = self._prev_hand_quats.get(side)
@@ -951,6 +1126,23 @@ class CSVRigAnimator:
                 return
         self._prev_hand_quats[side] = _q(new_q)
         self._cur_quats[hand_jn] = new_q
+
+        # Route the twist component to the forearm joint (see fix 2 comment above).
+        # Pre-multiplying twist_q onto fa_local applies the twist in the forearm's
+        # pre-rest local frame, which is the same frame offset_q was decomposed in.
+        # Temporal smoothing: blend the twist against the previous frame's twist to
+        # match the hand joint's blending cadence.
+        if new_twist_q is not None:
+            fa_local = self._cur_quats.get(fa_jn)
+            if fa_local is not None:
+                prev_twist = self._prev_forearm_twists.get(side)
+                if prev_twist is not None:
+                    blended = _q(prev_twist + (new_twist_q - prev_twist) * HAND_QUAT_BLEND_ALPHA)
+                    if blended.lengthSquared() > EPSILON:
+                        blended.normalize()
+                        new_twist_q = blended
+                self._prev_forearm_twists[side] = _q(new_twist_q)
+                self._cur_quats[fa_jn] = _q(new_twist_q * fa_local)
 
     # ------------------------------------------------------------------
     # Finger FK
