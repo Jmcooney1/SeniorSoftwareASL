@@ -112,18 +112,32 @@ DEFAULT_CSV_FPS = 24.0
 
 # Temporal smoothing.
 #
-# Fix 16 retune: comparing the rig against the (unsmoothed) debug skeleton
-# showed the arm chain reproduces capture directions EXACTLY when smoothing
-# is disabled — every arm-position complaint ("wrist higher than skeleton",
-# "forearm doesn't descend", "hand out of line") was EMA lag/attenuation at
-# the old alphas (ARM 0.40 / HAND 0.22), which lag ~1.5–4 frames and shrink
-# fast motions.  The capture data is clean enough that lighter smoothing
-# suffices; raise alphas to cut lag roughly in half.  If jitter ever shows
-# up on noisier clips, lower these again (or make them adaptive).
-ARM_BLEND_ALPHA = 0.70
-HAND_BASIS_BLEND_ALPHA = 0.55
-HAND_QUAT_BLEND_ALPHA = 0.45
+# History:
+#   * Fix 16 — comparing the rig against the (unsmoothed) debug skeleton
+#     showed the arm chain reproduces capture directions EXACTLY when
+#     smoothing is disabled; every arm-position complaint ("wrist higher
+#     than skeleton", "forearm doesn't descend") was EMA lag/attenuation
+#     at the original fixed alphas (ARM 0.40 / HAND 0.22).  Alphas were
+#     raised (0.70/0.55/0.45), which fixed the lag but let landmark noise
+#     through as visible arm twitching on otherwise-still holds.
+#   * Fix 19 — VELOCITY-ADAPTIVE alpha (one-euro-filter idea): tiny
+#     frame-to-frame target changes are treated as sensor noise and
+#     smoothed hard; large changes are treated as real motion and followed
+#     almost immediately.  This gives less jitter than the old 0.40 fixed
+#     alpha AND less lag than the 0.70 one.  `_adaptive_alpha` maps the
+#     angular step to a blend weight:
+#       step ≤ ~0°  → SMOOTH_ALPHA_MIN   (heavy smoothing, kills twitch)
+#       step ≥ SMOOTH_SATURATION_DEG → SMOOTH_ALPHA_MAX (instant follow)
+SMOOTH_ALPHA_MIN = 0.15
+SMOOTH_ALPHA_MAX = 0.90
+SMOOTH_SATURATION_DEG = 7.0
 TORSO_BLEND_ALPHA = 0.15
+
+
+def _adaptive_alpha(step_deg: float) -> float:
+    """Blend weight for a target that moved *step_deg* since last frame."""
+    t = _clamp(step_deg / SMOOTH_SATURATION_DEG, 0.0, 1.0)
+    return SMOOTH_ALPHA_MIN + (SMOOTH_ALPHA_MAX - SMOOTH_ALPHA_MIN) * t
 # Consecutive >45° wrist-target jumps tolerated before accepting the new
 # orientation as real motion instead of a landmark glitch (see Fix 9).
 HAND_GATE_MAX_REJECTS = 3
@@ -145,10 +159,32 @@ FINGER_POSE_STRENGTH = 0.90
 THUMB_POSE_STRENGTH = 0.85
 MAX_FINGER_CURL_RADIANS = math.radians(110.0)
 
+# Fix 20: idle pose for non-signing arms (see _apply_idle_side).  The rig's
+# rest pose is A/T-pose-like, so an inactive side left at rest sticks out
+# sideways.  These shape a natural "arm hanging at the side": the upperarm
+# points mostly down with a slight outward lean, the forearm adds a soft
+# forward elbow bend, and the fingers get a light curl so the hand doesn't
+# read as a rigid plank.  Ratios are relative to the unit "down" direction.
+IDLE_UPPERARM_OUT = 0.18      # outward lean of the hanging upper arm
+IDLE_UPPERARM_FWD = 0.02
+IDLE_FOREARM_OUT = 0.06
+IDLE_FOREARM_FWD = 0.18       # soft forward elbow bend
+IDLE_FINGER_CURL_DEG = 14.0   # light relaxed finger curl (per segment)
+
+# Fix 19: cap on the palm-ward component of the thumb-base target direction
+# (sin of the angle past the palm plane; 0.55 ≈ 33°).  Two reasons:
+#   * The palm-component is the thumb target's least reliable part — it
+#     comes from image-space hand z (weak monocular depth).
+#   * A real hand deforms the thenar (fleshy thumb-base) region as the
+#     thumb opposes; this mesh does not, so a strongly palm-ward thumb
+#     metacarpal reads as the thumb "snapping under the palm" with the
+#     hand not adapting.  Real CMC opposition rarely exceeds ~45° anyway.
+THUMB_PALM_MAX_COMPONENT = 0.55
+
 # Bumped whenever the wrist/hand orientation pipeline changes; printed once at
 # animator init so testers can confirm which revision is actually running
 # (during the fix-3/4 iterations it was unclear whether edits were live).
-WRIST_PIPELINE_REVISION = "fix-18 (2026-07-03: image-basis palm-sign disambiguation)"
+WRIST_PIPELINE_REVISION = "fix-20 (2026-07-07: natural idle-arm pose)"
 
 
 # ---------------------------------------------------------------------------
@@ -218,6 +254,14 @@ def _clamp(val: float, lo: float, hi: float) -> float:
 
 def _lerp_vec(a: Vec3, b: Vec3, t: float) -> Vec3:
     return a * (1.0 - t) + b * t
+
+
+def _dir_step_deg(a: Vec3 | None, b: Vec3 | None) -> float:
+    """Angle in degrees between two unit directions (for _adaptive_alpha).
+    Unknown inputs report saturation so the filter follows immediately."""
+    if a is None or b is None:
+        return SMOOTH_SATURATION_DEG
+    return math.degrees(math.acos(_clamp(a.dot(b), -1.0, 1.0)))
 
 
 def _blend_dir(rest: Vec3, target: Vec3, alpha: float) -> Vec3 | None:
@@ -478,6 +522,15 @@ class CSVSignClip:
         self.available: bool = self.num_frames > 0
         self.fps: float = self._compute_fps()
 
+        # Fix 19: per-side hand-data availability over the WHOLE clip.
+        # One-handed signs have zero hand-landmark frames for the idle hand;
+        # the animator uses this to keep that arm tucked at rest instead of
+        # chasing incidental pose motion of an arm that isn't signing.
+        self.has_left_hand_data: bool = any(
+            f is not None for f in self.left_hand_frames)
+        self.has_right_hand_data: bool = any(
+            f is not None for f in self.right_hand_frames)
+
     # ---- parsing ----
 
     def _parse(self) -> None:
@@ -615,6 +668,8 @@ class CSVRigAnimator:
         self.actor = actor
         self.clip: CSVSignClip | None = None
         self.enabled = False
+        # Which sides are signing in the current clip (see set_clip, Fix 19).
+        self._side_active: dict[str, bool] = {"L": True, "R": True}
 
         # Public metadata for HUD / UI
         self.selected_sign_name: str | None = None
@@ -695,8 +750,24 @@ class CSVRigAnimator:
         self.selected_sign_name = clip.sign_name or clip.csv_path.stem
         self.selected_gloss = clip.sign_name
         self.enabled = clip.available
+        # Fix 19: one-handed signs — a side whose hand landmarks NEVER
+        # appear in the clip is not signing; leave its whole arm at the
+        # rest pose (tucked) instead of tracking incidental pose-stream
+        # motion.  If NEITHER side has hand data (older clips without hand
+        # columns), keep animating both arms — an arms-only clip is better
+        # than a statue.
+        has = {"L": clip.has_left_hand_data, "R": clip.has_right_hand_data}
+        if has["L"] or has["R"]:
+            self._side_active = has
+        else:
+            self._side_active = {"L": True, "R": True}
         self._clear_temporal()
         self._reset_pose()
+        # Fix 20: pose inactive arms naturally at the side (rest pose is
+        # A/T-pose-like and reads as a half T-pose if left untouched).
+        for side in SIDES:
+            if not self._side_active.get(side, True):
+                self._apply_idle_side(side)
         self._freeze_all()
         self.actor.update()
 
@@ -918,6 +989,57 @@ class CSVRigAnimator:
         return _norm(_basis_to_world(local, self._rest_torso))
 
     # ------------------------------------------------------------------
+    # Idle pose for non-signing arms (Fix 20)
+    # ------------------------------------------------------------------
+
+    def _apply_idle_side(self, side: str) -> None:
+        """Pose an inactive side's arm hanging naturally at the character's
+        side.  Applied ONCE in set_clip; the per-frame freezes then hold it
+        (update() skips inactive sides entirely, so _cur_quats persist).
+
+        Targets are built in the rig torso frame — torso col0 = anatomical
+        up, col1 = character-right, col2 = character-forward (measured) —
+        and driven through the same rest-relative FK math as _update_arms,
+        so this stays valid regardless of what the model's rest pose is.
+        """
+        up, right, fwd = self._rest_torso
+        out = right * (1.0 if side == "R" else -1.0)
+        down = up * -1.0
+        ua_target = _norm(down + out * IDLE_UPPERARM_OUT + fwd * IDLE_UPPERARM_FWD)
+        fa_target = _norm(down + out * IDLE_FOREARM_OUT + fwd * IDLE_FOREARM_FWD)
+        if ua_target is None or fa_target is None:
+            return
+
+        parent_wq = self._arm_parent_world_q[side]
+        ua = self.arm_ctrls[side]["Upperarm"]
+        tgt = _norm(parent_wq.conjugate().xform(ua_target))
+        rst = _norm(ua.rest.quat.xform(ua.rest_dir_local))
+        if tgt is None or rst is None:
+            return
+        ua_q = ua.rest.quat * _rot_between(rst, tgt)
+        self._cur_quats[ua.joint_name] = ua_q
+        parent_wq = ua_q * parent_wq
+
+        fa = self.arm_ctrls[side]["Forearm"]
+        tgt = _norm(parent_wq.conjugate().xform(fa_target))
+        rst = _norm(fa.rest.quat.xform(fa.rest_dir_local))
+        if tgt is not None and rst is not None:
+            self._cur_quats[fa.joint_name] = fa.rest.quat * _rot_between(rst, tgt)
+
+        # Hand stays at its rest orientation relative to the forearm; give
+        # the fingers a light relaxed curl so the hand doesn't look stiff.
+        for fname, chain in self.finger_ctrls[side].items():
+            if fname == "Thumb":
+                continue
+            for ctrl in chain:
+                off = Quat()
+                off.setFromAxisAngleRad(
+                    math.radians(IDLE_FINGER_CURL_DEG) * ctrl.curl_sign,
+                    ctrl.curl_axis_local,
+                )
+                self._cur_quats[ctrl.joint_name] = ctrl.rest.quat * off
+
+    # ------------------------------------------------------------------
     # Arm FK
     # ------------------------------------------------------------------
 
@@ -942,7 +1064,8 @@ class CSVRigAnimator:
             if remapped is not None:
                 prev = self._prev_arm_dirs.get(side, {}).get("Upperarm")
                 if prev is not None:
-                    remapped = _blend_dir(prev, remapped, ARM_BLEND_ALPHA) or remapped
+                    a = _adaptive_alpha(_dir_step_deg(prev, remapped))
+                    remapped = _blend_dir(prev, remapped, a) or remapped
                 tgt = _norm(parent_wq.conjugate().xform(remapped))
                 rst = _norm(ua.rest.quat.xform(ua.rest_dir_local))
                 if tgt is not None and rst is not None:
@@ -959,7 +1082,8 @@ class CSVRigAnimator:
             if remapped is not None:
                 prev = self._prev_arm_dirs.get(side, {}).get("Forearm")
                 if prev is not None:
-                    remapped = _blend_dir(prev, remapped, ARM_BLEND_ALPHA) or remapped
+                    a = _adaptive_alpha(_dir_step_deg(prev, remapped))
+                    remapped = _blend_dir(prev, remapped, a) or remapped
                 tgt = _norm(parent_wq.conjugate().xform(remapped))
                 rst = _norm(fa.rest.quat.xform(fa.rest_dir_local))
                 if tgt is not None and rst is not None:
@@ -1072,8 +1196,13 @@ class CSVRigAnimator:
         x, y, z = basis
         if prev[2].dot(z) < 0.0:
             y, z = y * -1.0, z * -1.0
-        bx = _norm(_lerp_vec(prev[0], x, HAND_BASIS_BLEND_ALPHA)) or x
-        by = _norm(_lerp_vec(prev[1], y, HAND_BASIS_BLEND_ALPHA)) or y
+        # Fix 19: velocity-adaptive weight — use the larger of the two axis
+        # steps so a rotation around either axis counts as motion.
+        a = _adaptive_alpha(max(
+            _dir_step_deg(prev[0], x), _dir_step_deg(prev[1], y),
+        ))
+        bx = _norm(_lerp_vec(prev[0], x, a)) or x
+        by = _norm(_lerp_vec(prev[1], y, a)) or y
         stab = _build_basis(bx, by) or (x, y, z)
         self._prev_hand_bases[key] = stab
         return stab
@@ -1378,7 +1507,9 @@ class CSVRigAnimator:
                 # Sustained disagreement — the capture really did move.
                 # Fall through and accept (blended) to re-converge.
             self._hand_gate_rejects[side] = 0
-            new_q = _q(prev + (new_q - prev) * HAND_QUAT_BLEND_ALPHA)
+            # Fix 19: velocity-adaptive nlerp weight (quat angle = 2·acos|dot|).
+            step = math.degrees(2.0 * math.acos(_clamp(abs(prev.dot(new_q)), 0.0, 1.0)))
+            new_q = _q(prev + (new_q - prev) * _adaptive_alpha(step))
             if new_q.lengthSquared() > EPSILON:
                 new_q.normalize()
             else:
@@ -1396,7 +1527,9 @@ class CSVRigAnimator:
             if fa_local is not None:
                 prev_twist = self._prev_forearm_twists.get(side)
                 if prev_twist is not None:
-                    blended = _q(prev_twist + (new_twist_q - prev_twist) * HAND_QUAT_BLEND_ALPHA)
+                    step = math.degrees(2.0 * math.acos(
+                        _clamp(abs(prev_twist.dot(new_twist_q)), 0.0, 1.0)))
+                    blended = _q(prev_twist + (new_twist_q - prev_twist) * _adaptive_alpha(step))
                     if blended.lengthSquared() > EPSILON:
                         blended.normalize()
                         new_twist_q = blended
@@ -1429,6 +1562,9 @@ class CSVRigAnimator:
         cur_basis = self._current_hand_basis(side)
         hand_wq = _q(self._wj(f"FK-Hand.{side}").getQuat(self.actor)) # type: ignore
         in_cap = _world_to_basis(seg_dirs[0], cap_basis)
+        # Fix 19: clamp the palm-ward component (see THUMB_PALM_MAX_COMPONENT).
+        # Applied to the pre-negation value's magnitude via the normalised
+        # direction below, after the Fix-11 sign flip.
         # Fix 11 (restored by Fix 16): negate the palm-normal component.
         # cap_basis[2] decodes to the BACK of the hand (the left-handed
         # capture encoding negates numeric cross products) while the rig's
@@ -1440,6 +1576,16 @@ class CSVRigAnimator:
         # against that flipped hand were unreliable.  With the transfer
         # fixed, the encoding logic applies as originally derived.
         in_cap = Vec3(in_cap.x, in_cap.y, -in_cap.z)
+        in_cap_n = _norm(in_cap)
+        if in_cap_n is not None and in_cap_n.z > THUMB_PALM_MAX_COMPONENT:
+            # Rebuild the direction with the palm-ward component capped and
+            # the in-palm-plane direction preserved.
+            in_plane = _norm(Vec3(in_cap_n.x, in_cap_n.y, 0.0))
+            if in_plane is not None:
+                k = math.sqrt(max(EPSILON, 1.0 - THUMB_PALM_MAX_COMPONENT ** 2))
+                in_cap = Vec3(
+                    in_plane.x * k, in_plane.y * k, THUMB_PALM_MAX_COMPONENT,
+                )
         tgt_base = _norm(_basis_to_world(in_cap, cur_basis))
         if tgt_base is None:
             return
@@ -1544,6 +1690,13 @@ class CSVRigAnimator:
         if self._last_frame is not None and fi < self._last_frame:
             self._clear_temporal()
             self._reset_pose()
+            # Fix 20b: _reset_pose() puts EVERY joint back to rest, which is
+            # A/T-pose-like — on loop wrap the tucked idle arms snapped back
+            # out sideways because the idle pose was only applied once in
+            # set_clip.  Re-apply it whenever the pose is reset.
+            for side in SIDES:
+                if not self._side_active.get(side, True):
+                    self._apply_idle_side(side)
             self._freeze_all()
             self.actor.update()
         self._last_frame = fi
@@ -1559,8 +1712,10 @@ class CSVRigAnimator:
             if self._ref_torso is None:
                 self._ref_torso = self._cur_torso
 
-        # Arms
+        # Arms (Fix 19: inactive sides stay at rest — arm tucked)
         for side in SIDES:
+            if not self._side_active.get(side, True):
+                continue
             self._update_arms(side, pose_lms)
         self._freeze_joints([
             ctrl.joint_name
@@ -1606,6 +1761,8 @@ class CSVRigAnimator:
                 pw_bases[side] = self._stabilize_basis(f"{side}#pw", raw_pw)
 
         for side in SIDES:
+            if not self._side_active.get(side, True):
+                continue
             # Wrist target: prefer the pose-world stub basis; fall back to
             # the image-space basis only when the stubs are missing.
             wb = pw_bases.get(side) or cap_bases.get(side)
