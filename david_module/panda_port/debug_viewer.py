@@ -61,7 +61,7 @@ TEST_SIGNS = [
 # Full catalogue folder (all ~4k signs), with fallback to the demo subset.
 REPO_ROOT = Path(HERE).resolve().parent.parent
 CATALOGUE_DIRS = [
-    REPO_ROOT / "dataSet" / "david_dataset" / "Landmarks",
+    REPO_ROOT / "dataSet" / "david_dataset" / "landmarks",
     REPO_ROOT / "dataSet" / "david_dataset" / "best",
 ]
 

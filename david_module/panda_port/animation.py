@@ -2,7 +2,7 @@
 
 Reads MediaPipe ``pose_world_landmarks`` (hip-centred real-world metres)
 and ``hand_landmarks`` (normalised image-space) exported as CSV files from
-SignSchool videos (full ~4k-sign set in ``dataSet/david_dataset/Landmarks/``;
+SignSchool videos (full ~4k-sign set in ``dataSet/david_dataset/landmarks/``;
 demo-confirmed subset in ``dataSet/david_dataset/best/``).
 
 Coordinate notes

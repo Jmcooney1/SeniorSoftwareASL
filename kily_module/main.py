@@ -27,7 +27,7 @@ def _load_paths():
 
 _BASE = _load_paths()
 DB_PATH      = os.path.join(_BASE, "david_dataset")
-LANDMARK_FOLDER = os.path.join(DB_PATH, "Landmarks")
+LANDMARK_FOLDER = os.path.join(DB_PATH, "landmarks")
 
 
 def get_tab():

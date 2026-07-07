@@ -25,7 +25,7 @@ player.stop()
 
 Signs are loaded from the folder set by `csv_dir` in `config.json`
 (default: `dataSet/david_dataset/best` — best-looking animations subset; the full
-~4k-sign capture set lives in `dataSet/david_dataset/Landmarks`).
+~4k-sign capture set lives in `dataSet/david_dataset/landmarks`).
 
 ```python
 from david_module.panda_port.animation import list_csv_signs, find_csv_sign
