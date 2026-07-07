@@ -148,7 +148,7 @@ MAX_FINGER_CURL_RADIANS = math.radians(110.0)
 # Bumped whenever the wrist/hand orientation pipeline changes; printed once at
 # animator init so testers can confirm which revision is actually running
 # (during the fix-3/4 iterations it was unclear whether edits were live).
-WRIST_PIPELINE_REVISION = "fix-17 (2026-07-03: forearm frame from joint positions)"
+WRIST_PIPELINE_REVISION = "fix-18 (2026-07-03: image-basis palm-sign disambiguation)"
 
 
 # ---------------------------------------------------------------------------
@@ -1579,11 +1579,27 @@ class CSVRigAnimator:
         for side in SIDES:
             hlms = hand_lms.get(side)
             raw = self._target_hand_basis(side, hlms) if hlms is not None else None
+            raw_pw = self._target_hand_basis_pw(side, pose_lms)
+            # Fix 18: disambiguate the image-basis palm-normal sign with the
+            # metric pose-stub basis.  The image basis col2 depends on
+            # MediaPipe's weak monocular hand z, and a single bad frame at a
+            # stabiliser (re)start could LOCK the 180°-flipped state via
+            # _stabilize_basis's continuity rule for the rest of the clip
+            # (measured on "Acquire": raw basis wrong on 4/32 left-hand
+            # frames, stabilised basis wrong on 32/32).  A flipped basis
+            # silently violates the Fix-7 side convention, and its one
+            # sign-critical consumer is the THUMB transfer — symptom: thumb
+            # folded into / poking through the hand, typically one-sided
+            # and clip-dependent.  Both bases build col2 with the same
+            # recipe and convention, so a direct dot comparison per frame
+            # keeps the image basis honest; the stabiliser flip rule
+            # remains only as a fallback when the pose stubs are missing.
+            if raw is not None and raw_pw is not None and raw[2].dot(raw_pw[2]) < 0.0:
+                raw = (raw[0], raw[1] * -1.0, raw[2] * -1.0)
             if raw is None:
                 self._prev_hand_bases.pop(side, None)
             else:
                 cap_bases[side] = self._stabilize_basis(side, raw)
-            raw_pw = self._target_hand_basis_pw(side, pose_lms)
             if raw_pw is None:
                 self._prev_hand_bases.pop(f"{side}#pw", None)
             else:
