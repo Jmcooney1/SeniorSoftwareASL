@@ -122,11 +122,6 @@ class DebugViewer:
             self.camera_ctrl = None
 
         self.animator = CSVRigAnimator(self.character)
-        self.hud = None
-        try:
-            self.hud = panda_core.create_sign_hud(self.base, self.animator)
-        except Exception:
-            pass
 
         # Skeleton overlay (its own V-key binding lives in LandmarkVisualizer)
         self.viz = LandmarkVisualizer(

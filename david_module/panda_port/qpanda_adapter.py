@@ -2,7 +2,6 @@ from panda_core import (
     create_animator,
     create_camera_controller,
     create_character_pose_controller,
-    create_sign_hud,
     frame_camera,
     load_actor,
     setup_lighting,
@@ -68,7 +67,6 @@ class QPandaPandaWorld:
         except Exception:
             pass
 
-        self.sign_hud = create_sign_hud(self._world, self.landmark_animator)
         try:
             self.character_pose_controller = create_character_pose_controller(
                 self._world,

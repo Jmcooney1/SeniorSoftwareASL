@@ -5,7 +5,6 @@ from panda_core import (
     create_animator,
     create_camera_controller,
     create_character_pose_controller,
-    create_sign_hud,
     frame_camera,
     load_actor,
     setup_lighting,
@@ -54,8 +53,6 @@ class PandaApp(ShowBase):
                 self.landmark_animator.set_clip(CSVSignClip(target))
         except Exception:
             pass
-
-        self.sign_hud = create_sign_hud(self, self.landmark_animator)
 
         # Landmark debug overlay (toggle with V)
         self.debug_viz = LandmarkVisualizer(

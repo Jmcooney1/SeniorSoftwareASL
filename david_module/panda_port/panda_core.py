@@ -6,14 +6,12 @@ from pathlib import Path
 
 from direct.actor.Actor import Actor
 from direct.showbase.DirectObject import DirectObject
-from direct.gui.OnscreenText import OnscreenText
 from panda3d.core import (
     AmbientLight,
     DirectionalLight,
     Filename,
     LPoint3f,
     Quat,
-    TextNode,
     TransformState,
     Vec3,
 )
@@ -324,56 +322,6 @@ def create_character_pose_controller(world, actor: Actor, camera=None):
         follow_camera=EYES_FOLLOW_CAMERA_BY_DEFAULT,
     )
 
-
-
-def _sign_label_text(animator) -> str:
-    gloss = getattr(animator, "selected_gloss", None)
-    clip_path = getattr(animator, "selected_clip_path", None)
-    clip_label = clip_path.stem if clip_path is not None else "unknown"
-    label = gloss or clip_label
-    return f"Signing: {label}"
-
-
-def _ensure_hud_camera(world) -> None:
-    if getattr(world, "_sign_hud_cam2d", None) is not None:
-        return
-    buffer = getattr(world, "buff", None)
-    if buffer is None:
-        return
-    world._sign_hud_cam2d = world.makeCamera2d(buffer, sort=20)
-
-
-def create_sign_hud(world, animator):
-    parent = getattr(world, "aspect2d", None) or getattr(world, "render2d", None)
-    if parent is None:
-        return None
-
-    try:
-        _ensure_hud_camera(world)
-    except Exception:
-        pass
-
-    try:
-        aspect = float(world.getAspectRatio())
-    except Exception:
-        aspect = 1.0
-
-    return OnscreenText(
-        text=_sign_label_text(animator),
-        parent=parent,
-        pos=(-aspect + 0.12, 0.92),
-        scale=0.055,
-        align=TextNode.ALeft,
-        fg=(0.96, 0.97, 0.99, 1.0),
-        bg=(0.08, 0.1, 0.14, 0.78),
-        mayChange=True,
-    )
-
-
-def update_sign_hud(hud, animator) -> None:
-    """Refresh the on-screen sign label after a clip swap."""
-    if hud is not None:
-        hud.setText(_sign_label_text(animator))
 
 
 def create_animator(actor: Actor, csv_path=None):
