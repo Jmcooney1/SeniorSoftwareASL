@@ -2,7 +2,8 @@
 
 Reads MediaPipe ``pose_world_landmarks`` (hip-centred real-world metres)
 and ``hand_landmarks`` (normalised image-space) exported as CSV files from
-SignSchool videos (~4250 signs in ``dataSet/david-dataset/Landmarks/world-pose/``).
+SignSchool videos (full ~4k-sign set in ``dataSet/david_dataset/landmarks/``;
+demo-confirmed subset in ``dataSet/david_dataset/best/``).
 
 Coordinate notes
 ~~~~~~~~~~~~~~~~
@@ -78,40 +79,112 @@ POSE_LEFT_ELBOW = 13
 POSE_RIGHT_ELBOW = 14
 POSE_LEFT_WRIST = 15
 POSE_RIGHT_WRIST = 16
+# Hand "stub" landmarks in the POSE stream (true metric world space) — used
+# by Fix 14 to build the wrist orientation basis instead of the image-space
+# hand landmarks, whose monocular z is unreliable (see _target_hand_basis_pw).
+POSE_LEFT_PINKY = 17
+POSE_RIGHT_PINKY = 18
+POSE_LEFT_INDEX = 19
+POSE_RIGHT_INDEX = 20
 POSE_LEFT_HIP = 23
 POSE_RIGHT_HIP = 24
 
 # CSV catalogue
 def _csv_dir_from_config() -> Path:
-    """Read csv_dir from config.json; fall back to dataSet/david-dataset/animations."""
+    """Read csv_dir from config.json; fall back to dataSet/david_dataset/best."""
     repo_root = Path(__file__).resolve().parent.parent.parent
     config_path = repo_root / "config.json"
     try:
         import json
         with open(config_path) as f:
             cfg = json.load(f)
-        rel = cfg.get("csv_dir", "dataSet/david-dataset/animations")
+        rel = cfg.get("csv_dir", "dataSet/david_dataset/best")
         p = Path(rel)
         if not p.is_absolute():
             p = repo_root / p
         return p.resolve()
     except Exception:
-        return (repo_root / "dataSet" / "david-dataset" / "animations").resolve()
+        return (repo_root / "dataSet" / "david_dataset" / "best").resolve()
 
 CSV_DIR = _csv_dir_from_config()
 CSV_FILENAME_RE = re.compile(r"^SignSchool\s+(.+?)\s+\[(\d+)x(\d+)\]\.csv$")
-DEFAULT_CSV_FPS = 30.0
+DEFAULT_CSV_FPS = 24.0
 
-# Temporal smoothing
-ARM_BLEND_ALPHA = 0.40
-HAND_BASIS_BLEND_ALPHA = 0.30
-HAND_QUAT_BLEND_ALPHA = 0.22
+# Temporal smoothing.
+#
+# History:
+#   * Fix 16 — comparing the rig against the (unsmoothed) debug skeleton
+#     showed the arm chain reproduces capture directions EXACTLY when
+#     smoothing is disabled; every arm-position complaint ("wrist higher
+#     than skeleton", "forearm doesn't descend") was EMA lag/attenuation
+#     at the original fixed alphas (ARM 0.40 / HAND 0.22).  Alphas were
+#     raised (0.70/0.55/0.45), which fixed the lag but let landmark noise
+#     through as visible arm twitching on otherwise-still holds.
+#   * Fix 19 — VELOCITY-ADAPTIVE alpha (one-euro-filter idea): tiny
+#     frame-to-frame target changes are treated as sensor noise and
+#     smoothed hard; large changes are treated as real motion and followed
+#     almost immediately.  This gives less jitter than the old 0.40 fixed
+#     alpha AND less lag than the 0.70 one.  `_adaptive_alpha` maps the
+#     angular step to a blend weight:
+#       step ≤ ~0°  → SMOOTH_ALPHA_MIN   (heavy smoothing, kills twitch)
+#       step ≥ SMOOTH_SATURATION_DEG → SMOOTH_ALPHA_MAX (instant follow)
+SMOOTH_ALPHA_MIN = 0.15
+SMOOTH_ALPHA_MAX = 0.90
+SMOOTH_SATURATION_DEG = 7.0
 TORSO_BLEND_ALPHA = 0.15
+
+
+def _adaptive_alpha(step_deg: float) -> float:
+    """Blend weight for a target that moved *step_deg* since last frame."""
+    t = _clamp(step_deg / SMOOTH_SATURATION_DEG, 0.0, 1.0)
+    return SMOOTH_ALPHA_MIN + (SMOOTH_ALPHA_MAX - SMOOTH_ALPHA_MIN) * t
+# Consecutive >45° wrist-target jumps tolerated before accepting the new
+# orientation as real motion instead of a landmark glitch (see Fix 9).
+HAND_GATE_MAX_REJECTS = 3
+
+# Fix 13: fraction of the wrist twist (pronation/supination) routed to the
+# forearm joint; the remainder stays on the hand joint.  1.0 concentrates the
+# whole roll at the elbow (knot-like mesh pinch there), 0.0 concentrates it at
+# the wrist (the Fix-1 "braiding" artifact).  0.5 spreads the deformation over
+# both joint weights.  The hand's world orientation is identical for any value
+# (fractions of the same-axis rotation commute — see _quat_fraction).
+FOREARM_TWIST_RATIO = 0.5
 
 # Finger strength
 FINGER_POSE_STRENGTH = 0.90
-THUMB_POSE_STRENGTH = 0.50
+# Fix 16: was 0.50, which halved every thumb rotation from rest — captured
+# "thumb extended outward" poses only made it halfway and read as "held
+# against the palm".  Raised now that the thumb's target basis is
+# trustworthy (chirality fixes 7/11/16).
+THUMB_POSE_STRENGTH = 0.85
 MAX_FINGER_CURL_RADIANS = math.radians(110.0)
+
+# Fix 20: idle pose for non-signing arms (see _apply_idle_side).  The rig's
+# rest pose is A/T-pose-like, so an inactive side left at rest sticks out
+# sideways.  These shape a natural "arm hanging at the side": the upperarm
+# points mostly down with a slight outward lean, the forearm adds a soft
+# forward elbow bend, and the fingers get a light curl so the hand doesn't
+# read as a rigid plank.  Ratios are relative to the unit "down" direction.
+IDLE_UPPERARM_OUT = 0.18      # outward lean of the hanging upper arm
+IDLE_UPPERARM_FWD = 0.02
+IDLE_FOREARM_OUT = 0.06
+IDLE_FOREARM_FWD = 0.18       # soft forward elbow bend
+IDLE_FINGER_CURL_DEG = 14.0   # light relaxed finger curl (per segment)
+
+# Fix 19: cap on the palm-ward component of the thumb-base target direction
+# (sin of the angle past the palm plane; 0.55 ≈ 33°).  Two reasons:
+#   * The palm-component is the thumb target's least reliable part — it
+#     comes from image-space hand z (weak monocular depth).
+#   * A real hand deforms the thenar (fleshy thumb-base) region as the
+#     thumb opposes; this mesh does not, so a strongly palm-ward thumb
+#     metacarpal reads as the thumb "snapping under the palm" with the
+#     hand not adapting.  Real CMC opposition rarely exceeds ~45° anyway.
+THUMB_PALM_MAX_COMPONENT = 0.55
+
+# Bumped whenever the wrist/hand orientation pipeline changes; printed once at
+# animator init so testers can confirm which revision is actually running
+# (during the fix-3/4 iterations it was unclear whether edits were live).
+WRIST_PIPELINE_REVISION = "fix-20 (2026-07-07: natural idle-arm pose)"
 
 
 # ---------------------------------------------------------------------------
@@ -181,6 +254,14 @@ def _clamp(val: float, lo: float, hi: float) -> float:
 
 def _lerp_vec(a: Vec3, b: Vec3, t: float) -> Vec3:
     return a * (1.0 - t) + b * t
+
+
+def _dir_step_deg(a: Vec3 | None, b: Vec3 | None) -> float:
+    """Angle in degrees between two unit directions (for _adaptive_alpha).
+    Unknown inputs report saturation so the filter follows immediately."""
+    if a is None or b is None:
+        return SMOOTH_SATURATION_DEG
+    return math.degrees(math.acos(_clamp(a.dot(b), -1.0, 1.0)))
 
 
 def _blend_dir(rest: Vec3, target: Vec3, alpha: float) -> Vec3 | None:
@@ -276,15 +357,36 @@ def _basis_to_world(v: Vec3, basis: tuple[Vec3, Vec3, Vec3]) -> Vec3:
 
 
 def _rot_from_basis(rp: Vec3, rs: Vec3, tp: Vec3, ts: Vec3) -> Quat:
-    """Quaternion rotating rest-basis onto target-basis."""
+    """Quaternion rotating rest-basis onto target-basis.
+
+    Fix 6: the original implementation returned ``setFromMatrix(tb * riᵀ)``,
+    which under Panda3D's ROW-VECTOR convention is the INVERSE of the
+    intended rotation.  Verified by direct probe (scratchpad/quat_probe.py):
+
+        * ``(q1*q2).xform(v) == q2.xform(q1.xform(v))`` — q1 applies FIRST,
+          i.e. Panda composes like row-vector matrices ``v' = v·M1·M2``.
+        * With the old code, ``delta.xform(T0) ≈ R0`` (target→rest) while
+          ``delta.xform(R0) != T0`` — exactly backwards from the docstring.
+
+    Consequence in _update_hand_pose: the wrist was rotated AWAY from the
+    captured orientation by the inverse delta, so the candidate palm never
+    aligned with the palm target (scoring hovered near 0 instead of ±1)
+    and the applied wrist orientation was wrong in a pose-dependent way —
+    the long-standing "palm faces the wrong direction" family of bugs.
+    The arm chain was unaffected because it uses _rot_between (axis-angle,
+    correctly oriented) rather than this basis-to-basis path.
+
+    Correct form under the row-vector convention: transpose the TARGET
+    matrix and compose ``rb * tbᵀ`` (mirror-image of the old expression).
+    """
     rb = _basis_mat(rp, rs)
     tb = _basis_mat(tp, ts)
     if rb is None or tb is None:
         return Quat.identQuat()
-    ri = LMatrix3f(rb)
-    ri.transposeInPlace()
+    ti = LMatrix3f(tb)
+    ti.transposeInPlace()
     q = Quat()
-    q.setFromMatrix(tb * ri)
+    q.setFromMatrix(rb * ti)
     return q
 
 
@@ -308,6 +410,44 @@ def _remove_twist_from_offset(offset_q: Quat, twist_axis_parent: Vec3) -> Quat:
         return Quat.identQuat()
     swing.normalize()
     return swing
+
+
+def _quat_fraction(q: Quat, t: float) -> Quat:
+    """Return q^t (slerp from identity), assuming *q* is a unit quaternion.
+
+    Used by Fix 13 to split a twist rotation between two joints: because
+    fractions of the same axis-rotation commute, q^t * q^(1-t) == q exactly,
+    so distributing the twist preserves the end-effector orientation.
+    """
+    w = _clamp(q.getR(), -1.0, 1.0)
+    vlen = math.sqrt(max(0.0, q.getI() ** 2 + q.getJ() ** 2 + q.getK() ** 2))
+    if vlen <= EPSILON:
+        return Quat.identQuat()
+    angle = 2.0 * math.atan2(vlen, w)
+    if angle > math.pi:
+        angle -= 2.0 * math.pi
+    axis = Vec3(q.getI() / vlen, q.getJ() / vlen, q.getK() / vlen)
+    out = Quat()
+    out.setFromAxisAngleRad(angle * t, axis)
+    return out
+
+
+def _extract_twist_from_offset(offset_q: Quat, twist_axis_parent: Vec3) -> Quat:
+    """Return only the twist component of an offset quaternion around a parent-space axis."""
+    axis = _norm(twist_axis_parent)
+    if axis is None:
+        return Quat.identQuat()
+
+    projected = axis * (
+        offset_q.getI() * axis.x
+        + offset_q.getJ() * axis.y
+        + offset_q.getK() * axis.z
+    )
+    twist = Quat(offset_q.getR(), projected.x, projected.y, projected.z)
+    if twist.lengthSquared() <= EPSILON:
+        return Quat.identQuat()
+    twist.normalize()
+    return twist
 
 
 # ---------------------------------------------------------------------------
@@ -382,6 +522,15 @@ class CSVSignClip:
         self.available: bool = self.num_frames > 0
         self.fps: float = self._compute_fps()
 
+        # Fix 19: per-side hand-data availability over the WHOLE clip.
+        # One-handed signs have zero hand-landmark frames for the idle hand;
+        # the animator uses this to keep that arm tucked at rest instead of
+        # chasing incidental pose motion of an arm that isn't signing.
+        self.has_left_hand_data: bool = any(
+            f is not None for f in self.left_hand_frames)
+        self.has_right_hand_data: bool = any(
+            f is not None for f in self.right_hand_frames)
+
     # ---- parsing ----
 
     def _parse(self) -> None:
@@ -429,8 +578,29 @@ class CSVSignClip:
                     self._parse_hand(row, rh_start) if self._has_right_hand and rh_start >= 0 else None
                 )
 
-    @staticmethod
-    def _parse_hand(row: list[str], start: int) -> dict[int, Vec3] | None:
+    def _parse_hand(self, row: list[str], start: int) -> dict[int, Vec3] | None:
+        # Fix 8: undo the aspect-ratio distortion of normalised image coords.
+        #
+        # MediaPipe ``hand_landmarks`` are normalised per-axis: x by image
+        # WIDTH, y by image HEIGHT (z is scaled "roughly like x").  On the
+        # 16:9 source videos (see [WxH] in the CSV filename — parsed since
+        # day one but never used) equal normalised steps in x and y span
+        # physical distances differing by W/H ≈ 1.78.  Every hand direction
+        # vector computed from raw normalised coords is therefore skewed
+        # toward the vertical (y magnitudes inflated ~1.78× relative to x),
+        # bending the derived hand basis by up to ~25° in a pose-dependent
+        # way — a systematic contributor to the wrist deviation errors.
+        #
+        # Multiplying x and z by aspect = W/H restores a uniform metric
+        # (units of image heights).  Only directions matter downstream, so
+        # the absolute scale is irrelevant; the RELATIVE per-axis scale is
+        # what must be uniform.  Pose_world landmarks are true metres and
+        # need no correction.
+        aspect = (
+            self.video_width / self.video_height
+            if self.video_width > 0 and self.video_height > 0
+            else 1.0
+        )
         lms: dict[int, Vec3] = {}
         for idx in range(21):
             base = start + idx * 4
@@ -441,7 +611,7 @@ class CSVSignClip:
                 x, y = float(xs), float(ys)
                 zs = row[base + 2]
                 z = float(zs) if zs else 0.0
-                lms[idx] = _hl2rig(x, y, z)
+                lms[idx] = _hl2rig(x * aspect, y, z * aspect)
             except (ValueError, IndexError):
                 continue
         return lms if len(lms) >= 10 else None
@@ -494,9 +664,12 @@ class CSVRigAnimator:
     """
 
     def __init__(self, actor: Actor, csv_path: Path | None = None) -> None:
+        print(f"[CSVRigAnimator] wrist pipeline revision: {WRIST_PIPELINE_REVISION}")
         self.actor = actor
         self.clip: CSVSignClip | None = None
         self.enabled = False
+        # Which sides are signing in the current clip (see set_clip, Fix 19).
+        self._side_active: dict[str, bool] = {"L": True, "R": True}
 
         # Public metadata for HUD / UI
         self.selected_sign_name: str | None = None
@@ -507,6 +680,13 @@ class CSVRigAnimator:
         self.last_pose_lms: dict[int, Vec3] = {}
         self.last_hand_lms: dict[str, dict[int, Vec3] | None] = {}
         self.hand_world_space: bool = False
+
+        # Per-side wrist debug telemetry, refreshed by _update_hand_pose each
+        # frame it runs.  Keys: "tgt_fwd", "tgt_palm" (rig-world targets),
+        # "best_score" (palm alignment of the winning candidate).  Used by the
+        # headless diagnostic (scratchpad) to measure achieved-vs-target error
+        # without duplicating the remap pipeline.
+        self.debug_hand: dict[str, dict[str, object]] = {}
 
         # Joint caches
         self._world_nodes: dict[str, object] = {}
@@ -527,6 +707,8 @@ class CSVRigAnimator:
         self._prev_arm_dirs: dict[str, dict[str, Vec3]] = {}
         self._prev_hand_bases: dict[str, tuple[Vec3, Vec3, Vec3]] = {}
         self._prev_hand_quats: dict[str, Quat] = {}
+        self._prev_forearm_twists: dict[str, Quat] = {}
+        self._hand_gate_rejects: dict[str, int] = {}
         self._prev_torso: tuple[Vec3, Vec3, Vec3] | None = None
         self._cur_torso: tuple[Vec3, Vec3, Vec3] | None = None
         self._ref_torso: tuple[Vec3, Vec3, Vec3] | None = None
@@ -568,8 +750,24 @@ class CSVRigAnimator:
         self.selected_sign_name = clip.sign_name or clip.csv_path.stem
         self.selected_gloss = clip.sign_name
         self.enabled = clip.available
+        # Fix 19: one-handed signs — a side whose hand landmarks NEVER
+        # appear in the clip is not signing; leave its whole arm at the
+        # rest pose (tucked) instead of tracking incidental pose-stream
+        # motion.  If NEITHER side has hand data (older clips without hand
+        # columns), keep animating both arms — an arms-only clip is better
+        # than a statue.
+        has = {"L": clip.has_left_hand_data, "R": clip.has_right_hand_data}
+        if has["L"] or has["R"]:
+            self._side_active = has
+        else:
+            self._side_active = {"L": True, "R": True}
         self._clear_temporal()
         self._reset_pose()
+        # Fix 20: pose inactive arms naturally at the side (rest pose is
+        # A/T-pose-like and reads as a half T-pose if left untouched).
+        for side in SIDES:
+            if not self._side_active.get(side, True):
+                self._apply_idle_side(side)
         self._freeze_all()
         self.actor.update()
 
@@ -578,6 +776,8 @@ class CSVRigAnimator:
         self._prev_arm_dirs.clear()
         self._prev_hand_bases.clear()
         self._prev_hand_quats.clear()
+        self._prev_forearm_twists.clear()
+        self._hand_gate_rejects.clear()
         self._prev_torso = None
         self._cur_torso = None
         self._ref_torso = None
@@ -637,14 +837,46 @@ class CSVRigAnimator:
 
     def _build_hand_rest_basis(self, side: str) -> tuple[Vec3, Vec3, Vec3]:
         hp = self._wj(f"DEF-Hand.{side}").getPos(self.actor) # type: ignore
-        fwd = self._wj(f"DEF-Middle1.{side}").getPos(self.actor) - hp # type: ignore
-        across = (
-            self._wj(f"DEF-Pinky1.{side}").getPos(self.actor) # type: ignore
-            - self._wj(f"DEF-Index1.{side}").getPos(self.actor) # type: ignore
-        )
-        # Pinky-Index points in opposite world directions for L vs R,
-        # flipping the palm normal from cross(fwd, across).  Negate for
-        # L so the palm always faces the same way (toward the actual palm).
+        idx1 = self._wj(f"DEF-Index1.{side}").getPos(self.actor) # type: ignore
+        pnk1 = self._wj(f"DEF-Pinky1.{side}").getPos(self.actor) # type: ignore
+        # Fix 15: fwd aims at the MIDPOINT of the index/pinky knuckles — the
+        # SAME recipe the capture-side bases use (_target_hand_basis[_pw]).
+        # It previously aimed at Middle1, but the middle knuckle is NOT the
+        # index/pinky midpoint (it sits ~1/3 along the knuckle row from the
+        # index), so rig-fwd and capture-fwd disagreed by several degrees
+        # inside the palm plane.  The wrist delta faithfully reproduced that
+        # disagreement on every sign as a constant ULNAR (pinky-ward)
+        # deviation bias — reported on "binoculars", "choke", "ironing" and
+        # (amplified) "Good, Thank You".  Matching the construction recipe
+        # on both ends cancels the bias exactly, with no anatomical-ratio
+        # guesswork.  If either side's recipe changes, change BOTH.
+        fwd = (idx1 + pnk1) * 0.5 - hp
+        across = pnk1 - idx1
+        # Left-hand finger-curl direction fix.
+        #
+        # `fwd × across` is chirality-dependent: in the rig's genuine
+        # right-handed 3D coordinates it yields the PALM-side normal on the
+        # right hand but the BACK-of-hand normal on the left (the mirrored
+        # hand geometry inverts the cross product).  [Label corrected during
+        # the Fix 10 convention audit — an earlier version of this comment
+        # had the sides swapped, which only matters for orientation
+        # debugging: the curl_sign detection below was calibrated against
+        # col2 empirically, so finger curls were always correct either way.]
+        # `_detect_curl_axis` relies on this vector to decide the
+        # sign of positive finger rotation -- specifically `deriv.dot(palm)`
+        # determines whether +curl_angle curls fingers inward or outward.
+        #
+        # Because the rain rig's left-side finger joints have their local
+        # axes mirrored (a standard Blender/Rigify convention), the naive
+        # unflipped palm vector makes L's positive rotation rotate the
+        # fingertips *away* from the palm -- i.e. the fingers bend backward
+        # toward the knuckles / back of the hand instead of curling in.
+        #
+        # Negating `across` on the left side forces the cross product to
+        # agree with the right-hand convention (back-of-hand normal), so the
+        # sign detection yields matching curl_sign values on both sides.
+        # Do NOT remove this without re-deriving curl_sign to handle the
+        # mirrored local axes directly.
         if side == "L":
             across = across * -1.0
         return _build_basis(fwd, across) or (Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1))
@@ -757,6 +989,57 @@ class CSVRigAnimator:
         return _norm(_basis_to_world(local, self._rest_torso))
 
     # ------------------------------------------------------------------
+    # Idle pose for non-signing arms (Fix 20)
+    # ------------------------------------------------------------------
+
+    def _apply_idle_side(self, side: str) -> None:
+        """Pose an inactive side's arm hanging naturally at the character's
+        side.  Applied ONCE in set_clip; the per-frame freezes then hold it
+        (update() skips inactive sides entirely, so _cur_quats persist).
+
+        Targets are built in the rig torso frame — torso col0 = anatomical
+        up, col1 = character-right, col2 = character-forward (measured) —
+        and driven through the same rest-relative FK math as _update_arms,
+        so this stays valid regardless of what the model's rest pose is.
+        """
+        up, right, fwd = self._rest_torso
+        out = right * (1.0 if side == "R" else -1.0)
+        down = up * -1.0
+        ua_target = _norm(down + out * IDLE_UPPERARM_OUT + fwd * IDLE_UPPERARM_FWD)
+        fa_target = _norm(down + out * IDLE_FOREARM_OUT + fwd * IDLE_FOREARM_FWD)
+        if ua_target is None or fa_target is None:
+            return
+
+        parent_wq = self._arm_parent_world_q[side]
+        ua = self.arm_ctrls[side]["Upperarm"]
+        tgt = _norm(parent_wq.conjugate().xform(ua_target))
+        rst = _norm(ua.rest.quat.xform(ua.rest_dir_local))
+        if tgt is None or rst is None:
+            return
+        ua_q = ua.rest.quat * _rot_between(rst, tgt)
+        self._cur_quats[ua.joint_name] = ua_q
+        parent_wq = ua_q * parent_wq
+
+        fa = self.arm_ctrls[side]["Forearm"]
+        tgt = _norm(parent_wq.conjugate().xform(fa_target))
+        rst = _norm(fa.rest.quat.xform(fa.rest_dir_local))
+        if tgt is not None and rst is not None:
+            self._cur_quats[fa.joint_name] = fa.rest.quat * _rot_between(rst, tgt)
+
+        # Hand stays at its rest orientation relative to the forearm; give
+        # the fingers a light relaxed curl so the hand doesn't look stiff.
+        for fname, chain in self.finger_ctrls[side].items():
+            if fname == "Thumb":
+                continue
+            for ctrl in chain:
+                off = Quat()
+                off.setFromAxisAngleRad(
+                    math.radians(IDLE_FINGER_CURL_DEG) * ctrl.curl_sign,
+                    ctrl.curl_axis_local,
+                )
+                self._cur_quats[ctrl.joint_name] = ctrl.rest.quat * off
+
+    # ------------------------------------------------------------------
     # Arm FK
     # ------------------------------------------------------------------
 
@@ -781,7 +1064,8 @@ class CSVRigAnimator:
             if remapped is not None:
                 prev = self._prev_arm_dirs.get(side, {}).get("Upperarm")
                 if prev is not None:
-                    remapped = _blend_dir(prev, remapped, ARM_BLEND_ALPHA) or remapped
+                    a = _adaptive_alpha(_dir_step_deg(prev, remapped))
+                    remapped = _blend_dir(prev, remapped, a) or remapped
                 tgt = _norm(parent_wq.conjugate().xform(remapped))
                 rst = _norm(ua.rest.quat.xform(ua.rest_dir_local))
                 if tgt is not None and rst is not None:
@@ -798,7 +1082,8 @@ class CSVRigAnimator:
             if remapped is not None:
                 prev = self._prev_arm_dirs.get(side, {}).get("Forearm")
                 if prev is not None:
-                    remapped = _blend_dir(prev, remapped, ARM_BLEND_ALPHA) or remapped
+                    a = _adaptive_alpha(_dir_step_deg(prev, remapped))
+                    remapped = _blend_dir(prev, remapped, a) or remapped
                 tgt = _norm(parent_wq.conjugate().xform(remapped))
                 rst = _norm(fa.rest.quat.xform(fa.rest_dir_local))
                 if tgt is not None and rst is not None:
@@ -809,20 +1094,20 @@ class CSVRigAnimator:
     # Hand basis from hand landmarks
     # ------------------------------------------------------------------
 
-    def _target_hand_basis(self, hlms: dict[int, Vec3]) -> tuple[Vec3, Vec3, Vec3] | None:
+    def _target_hand_basis(self, side: str, hlms: dict[int, Vec3]) -> tuple[Vec3, Vec3, Vec3] | None:
         w = hlms.get(0)
         idx_mcp = hlms.get(5)
         mid_mcp = hlms.get(9)
         rng_mcp = hlms.get(13)
         pnk_mcp = hlms.get(17)
-        centers = [v for v in (idx_mcp, mid_mcp, rng_mcp, pnk_mcp) if v is not None]
-        if not centers or w is None or idx_mcp is None or pnk_mcp is None:
+        if w is None or idx_mcp is None or pnk_mcp is None:
             return None
-        palm_c = sum(centers, Vec3(0, 0, 0)) * (1.0 / len(centers))
-        fwd = sum(
-            [v for v in (palm_c - w, idx_mcp - w, pnk_mcp - w) if v is not None],
-            Vec3(0, 0, 0),
-        ) * (1.0 / 3.0)
+        # Fix 15: fwd = wrist → midpoint(index MCP, pinky MCP) — the same
+        # construction recipe as the rig rest basis and the pose-world stub
+        # basis, so per-basis construction bias cancels in the wrist/thumb
+        # transfers (see _build_hand_rest_basis).  The previous multi-ray
+        # average pointed slightly ulnar of this ray.
+        fwd = (idx_mcp + pnk_mcp) * 0.5 - w
         across_parts = [pnk_mcp - idx_mcp]
         if mid_mcp is not None:
             across_parts.append(mid_mcp - idx_mcp)
@@ -831,22 +1116,95 @@ class CSVRigAnimator:
         if rng_mcp is not None:
             across_parts.append(pnk_mcp - rng_mcp)
         across = sum(across_parts, Vec3(0, 0, 0)) * (1.0 / len(across_parts))
+        # Fix 7: make the capture basis convention identical for both hands
+        # (mirrors the rig's left-hand across-negation in
+        # _build_hand_rest_basis).  `fwd × across` with across = index→pinky
+        # is chirality-dependent, so WITHOUT this negation cap_basis[2]
+        # means opposite anatomical sides for L vs R — in the left-handed
+        # capture encoding it decodes to back-of-hand on the right hand but
+        # palm-facing on the left (see the Fix 4/10 convention table in
+        # _update_hand_pose).  Negating `across` on the left makes col1 and
+        # col2 carry the SAME anatomical meaning on both sides, so all the
+        # downstream sign conventions (palm target, thumb basis transfer)
+        # are side-independent.  Without it the left wrist resolves to the
+        # 180°-flipped palm and the left thumb mirrors.
+        # Finger-curl code is unaffected: _update_finger only uses
+        # cap_basis[1] for plane projection, which is sign-invariant.
+        if side == "L":
+            across = across * -1.0
+        return _build_basis(fwd, across)
+
+    def _target_hand_basis_pw(
+        self, side: str, plms: dict[int, Vec3],
+    ) -> tuple[Vec3, Vec3, Vec3] | None:
+        """Wrist-orientation basis from POSE-WORLD hand stubs (Fix 14).
+
+        Why not the image-space hand landmarks (`_target_hand_basis`)?
+        MediaPipe's hand-landmark z is weak monocular depth — measured on
+        this dataset it is tiny (|z| median ≈ 0.02–0.06 vs x/y spans of
+        0.1–0.3), i.e. the reconstructed hand is FLATTENED toward the image
+        plane.  A depth-flattened hand's normal points spuriously along the
+        camera axis, which biased every palm target toward the camera: the
+        original "palms face the camera" complaint in "binoculars", the
+        away-from-chest tilt in "choke", and the backwards palm in "Good,
+        Thank You" all trace to this.  Cross-checking the two sources
+        per-frame showed 26–66° mean disagreement, and the pose-world
+        version matched user-verified ground truth on every probe sign
+        (Ironing palm-down, Binoculars palms-inward, Choke palm-inward)
+        while the image-space version did not.
+
+        The pose stream's wrist/index/pinky stubs are true world-metric 3D,
+        so the basis derived from them carries real depth.  Coarser (three
+        points, no palm arch) but ORIENTATION-correct — and orientation is
+        all the wrist needs.  Image-space landmarks remain in use for
+        finger curls and the thumb, which depend on angles WITHIN the hand
+        and barely on absolute depth.  Bonus: frames (or whole clips) with
+        no hand-landmark columns can still orient the wrist from the pose
+        stream — e.g. "Choke"'s left hand has zero hand-landmark frames.
+
+        Same Fix 7 convention as the image-space basis: across is negated
+        on the left so col1/col2 mean the same anatomical directions on
+        both sides.
+
+        Fix 15 note: fwd = wrist → midpoint(index, pinky) is the SHARED
+        construction recipe — _build_hand_rest_basis and _target_hand_basis
+        use the identical ray so that construction bias cancels in the
+        rest→target delta.  Keep all three in sync.
+        """
+        wi = POSE_LEFT_WRIST if side == "L" else POSE_RIGHT_WRIST
+        ii = POSE_LEFT_INDEX if side == "L" else POSE_RIGHT_INDEX
+        pi = POSE_LEFT_PINKY if side == "L" else POSE_RIGHT_PINKY
+        w, idx, pnk = plms.get(wi), plms.get(ii), plms.get(pi)
+        if w is None or idx is None or pnk is None:
+            return None
+        fwd = (idx + pnk) * 0.5 - w
+        across = pnk - idx
+        if side == "L":
+            across = across * -1.0
         return _build_basis(fwd, across)
 
     def _stabilize_basis(
-        self, side: str, basis: tuple[Vec3, Vec3, Vec3],
+        self, key: str, basis: tuple[Vec3, Vec3, Vec3],
     ) -> tuple[Vec3, Vec3, Vec3]:
-        prev = self._prev_hand_bases.get(side)
+        """Temporal blend of a capture basis.  *key* identifies the stream
+        (e.g. "R" for the image-space basis, "R#pw" for the pose-world one)
+        so the two streams don't cross-contaminate each other's history."""
+        prev = self._prev_hand_bases.get(key)
         if prev is None:
-            self._prev_hand_bases[side] = basis
+            self._prev_hand_bases[key] = basis
             return basis
         x, y, z = basis
         if prev[2].dot(z) < 0.0:
             y, z = y * -1.0, z * -1.0
-        bx = _norm(_lerp_vec(prev[0], x, HAND_BASIS_BLEND_ALPHA)) or x
-        by = _norm(_lerp_vec(prev[1], y, HAND_BASIS_BLEND_ALPHA)) or y
+        # Fix 19: velocity-adaptive weight — use the larger of the two axis
+        # steps so a rotation around either axis counts as motion.
+        a = _adaptive_alpha(max(
+            _dir_step_deg(prev[0], x), _dir_step_deg(prev[1], y),
+        ))
+        bx = _norm(_lerp_vec(prev[0], x, a)) or x
+        by = _norm(_lerp_vec(prev[1], y, a)) or y
         stab = _build_basis(bx, by) or (x, y, z)
-        self._prev_hand_bases[side] = stab
+        self._prev_hand_bases[key] = stab
         return stab
 
     def _current_hand_basis(self, side: str) -> tuple[Vec3, Vec3, Vec3]:
@@ -862,14 +1220,21 @@ class CSVRigAnimator:
     # ------------------------------------------------------------------
 
     def _update_hand_pose(
-        self, side: str, hlms: dict[int, Vec3],
+        self, side: str,
         cap_basis: tuple[Vec3, Vec3, Vec3],
         plms: dict[int, Vec3],
     ) -> None:
         hand_jn = f"FK-Hand.{side}"
         hand_rest = self._rest_of(hand_jn)
 
-        # Capture forearm frame (pose_world only – no coordinate mixing)
+        # Fix 3 requires the torso reference frame for chirality remapping;
+        # early-return if it's not ready yet (first frame before pose data
+        # has been observed).  The arm chain guards on this separately.
+        if self._ref_torso is None:
+            return
+        cap_torso = self._ref_torso
+
+        # Capture forearm anatomy — raw pose_world directions.
         si = POSE_LEFT_SHOULDER if side == "L" else POSE_RIGHT_SHOULDER
         ei = POSE_LEFT_ELBOW if side == "L" else POSE_RIGHT_ELBOW
         wi = POSE_LEFT_WRIST if side == "L" else POSE_RIGHT_WRIST
@@ -880,27 +1245,167 @@ class CSVRigAnimator:
         cap_ua_dir = _norm(s - e)
         if cap_fa_dir is None or cap_ua_dir is None:
             return
-        cap_fa_basis = _build_basis(cap_fa_dir, cap_ua_dir)
-        if cap_fa_basis is None:
+
+        # Fix 3: torso-consistent chirality correction for hand orientation.
+        #
+        # Problem history
+        # ~~~~~~~~~~~~~~~
+        # Capture-space (pose_world after `_pw2rig`) and rig-space differ by
+        # a reflection through the torso XY plane — that's what
+        # ``TORSO_DEPTH_SIGN`` encodes.  `_remap_dir` applies this reflection
+        # correctly for arm direction vectors because it is done in the
+        # torso basis, where the Z axis *is* the depth axis by construction.
+        #
+        # The previous implementation built ``cap_fa_basis`` directly from
+        # raw capture coordinates, projected the hand basis vectors into
+        # that forearm frame, and then applied ``z *= TORSO_DEPTH_SIGN`` to
+        # the forearm-local components.  That flip is only valid if the
+        # forearm basis's Z axis corresponds to the torso depth axis — but
+        # the forearm basis's Z axis is `forearm_dir × upper_arm_perp`,
+        # which rotates arbitrarily with arm configuration.  As the arm
+        # moves, the "depth flip" applied to forearm-local coords becomes a
+        # flip around a random axis, smearing the chirality correction
+        # across the wrist in unpredictable ways.
+        #
+        # Observed symptoms with the blind forearm-Z flip
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        # * "choke" — palm-toward-center orientation reached from the
+        #   front, but side view exposed a persistent radial (thumb-side)
+        #   deviation baked into the wrist.
+        # * "Good, thank you" — skeleton preview showed palm-inward but the
+        #   rig rendered palm-toward-screen.  Capture data was correct; the
+        #   capture→rig transform mis-rotated the hand.
+        # * "binoculars" — palms settled camera-facing rather than
+        #   inward-facing, and the motion axis collapsed to ulnar/radial
+        #   deviation instead of the required flexion/extension.  This is
+        #   exactly what a ~90° error around the forearm axis looks like.
+        #
+        # Fix 3 strategy
+        # ~~~~~~~~~~~~~~
+        # Apply the torso-plane reflection to *every* capture-space vector
+        # (hand basis + forearm-basis constituents) using `_remap_dir`.
+        # After remapping, all inputs live in rig-compatible world space
+        # and share a consistent handedness, so the forearm-local
+        # components of the hand are meaningful and need no further flip.
+        # The resulting hand-to-forearm relative orientation is then
+        # re-expressed in the *actual* rig forearm basis (from current FK
+        # state) so the hand follows the rig even when the arm FK doesn't
+        # perfectly reproduce the captured arm geometry (smoothing, limits).
+        rig_hfwd = self._remap_dir(cap_basis[0], cap_torso)
+        rig_hacross = self._remap_dir(cap_basis[1], cap_torso)
+        rig_fa_dir_from_cap = self._remap_dir(cap_fa_dir, cap_torso)
+        rig_ua_dir_from_cap = self._remap_dir(cap_ua_dir, cap_torso)
+        if (rig_hfwd is None or rig_hacross is None
+                or rig_fa_dir_from_cap is None
+                or rig_ua_dir_from_cap is None):
+            return
+        cap_fa_basis_in_rig = _build_basis(
+            rig_fa_dir_from_cap, rig_ua_dir_from_cap
+        )
+        if cap_fa_basis_in_rig is None:
             return
 
-        # Hand axes in capture forearm frame
-        hfwd_local = _world_to_basis(cap_basis[0], cap_fa_basis)
-        hacross_local = _world_to_basis(cap_basis[1], cap_fa_basis)
-        hfwd_local = Vec3(hfwd_local.x, hfwd_local.y, hfwd_local.z * TORSO_DEPTH_SIGN)
-        hacross_local = Vec3(hacross_local.x, hacross_local.y, hacross_local.z * TORSO_DEPTH_SIGN)
+        # Hand axes in the (rig-compatible) forearm frame.  No axis flip
+        # here — the chirality correction has already been applied above to
+        # both the hand axes and the forearm-basis constituents, so this is
+        # a pure change of basis.
+        hfwd_local = _world_to_basis(rig_hfwd, cap_fa_basis_in_rig)
+        hacross_local = _world_to_basis(rig_hacross, cap_fa_basis_in_rig)
 
-        # Rig forearm frame
+        # Fix 4/10/12: explicit palm target.  THE SIGN IS SET EMPIRICALLY —
+        # read this before "correcting" it again.
+        #
+        # Facts that are VERIFIED (probes preserved in the debugging notes):
+        #   * Panda3D quats: (q1*q2).xform applies q1 first; axis-angle
+        #     follows the right-hand rule; _rot_from_basis maps rest→target
+        #     only in its Fix-6 form.
+        #   * The capture encoding (x, −y, z) is a LEFT-handed assignment
+        #     of physical directions (x = signer's left, y = up, z =
+        #     signer's back).  Numeric cross products in capture coords
+        #     decode to the NEGATED physical cross.  Confirmed against user
+        #     ground truth on three signs: decoding pose-world stubs with
+        #     phys = −numeric reproduces "Ironing" palm-down, "Binoculars"
+        #     palms-inward, and "Choke" palm-inward exactly.
+        #   * The rig rest basis col2 points to the PALM side of both hands
+        #     (measured on the rig: FK-Thumb2/3 sit at positive col2 offset
+        #     from the hand plane; thumbs are palm-side anatomy).
+        #   * The rig actor space is nonstandard: anatomical up = −Y,
+        #     character right = −X (measured from the shoulder/hip joints).
+        #
+        # The one link that resists armchair derivation is the chirality of
+        # the actor-space encoding itself (which of ±Z the character faces
+        # in actor coords).  That single parity decides whether _remap_dir
+        # preserves or mirrors anatomical directions, and it flips the
+        # correct sign of the palm target.  Deriving it wrong is exactly
+        # how Fix 10 shipped a negation that put every palm ~180° off
+        # (elbows knotted by the huge twist needed to chase the mirrored
+        # target) even though the pipeline measured internally consistent
+        # (score +1.00, achieved ≈ target).
+        #
+        # Resolution (Fix 16): the "experiment beats theory" story above
+        # had a hidden variable.  The forearm-frame transfer carried an
+        # unnoticed 180°-rotation-about-the-forearm (opposite secondary
+        # axes — see the Fix 16 comment below), which for the palm axis
+        # acts approximately like a negation.  The empirical calibration
+        # of Fix 12 (dropping the − sign) was compensating THAT, which is
+        # why the theoretically-derived sign looked wrong on screen while
+        # the un-negated one looked right.  With the transfer fixed, the
+        # original Fix 10 reasoning stands:
+        #     capture numeric col2 decodes to the NEGATED physical palm
+        #     (left-handed capture encoding), so
+        #     tgt_palm = −R̂(cap_basis[2]) = the physical palm direction.
+        # Verified after Fix 16 by the ground-truth suite (Ironing palm
+        # DOWN, Binoculars palms INWARD, Choke palm inward-toward-chest)
+        # — same outcomes as the empirically-calibrated pre-Fix-16 build
+        # for a straight wrist, but now also correct under wrist bend.
+        rig_hpalm = self._remap_dir(cap_basis[2], cap_torso)
+        if rig_hpalm is None:
+            return
+        rig_hpalm = rig_hpalm * -1.0
+        hpalm_local = _world_to_basis(rig_hpalm, cap_fa_basis_in_rig)
+
+        # Rig forearm frame (from *current* FK pose).  See Fix 3 commentary:
+        # using the current rig forearm rather than the capture-derived one
+        # keeps the hand glued to the actual rig forearm when arm FK
+        # diverges from capture geometry.
+        #
+        # Fix 16/17: this frame must be built with the SAME anatomical
+        # recipe as the capture frame above (primary = elbow→wrist,
+        # secondary = elbow→shoulder), from plain JOINT POSITIONS.  Two
+        # bugs lived here:
+        #
+        #   * Fix 16 — the secondary used the upperarm BONE ray
+        #     (shoulder→elbow), anatomically OPPOSITE to the capture's
+        #     s − e.  _build_basis is linear in its orthogonalised
+        #     secondary, so the two frames came out (b0, b1, b2) vs
+        #     (b0, −b1, −b2) and the change of basis silently rotated
+        #     every hand target 180° AROUND THE FOREARM AXIS.  Straight
+        #     wrists hid it (fwd ∥ b0); any wrist bend had its direction
+        #     REVERSED around the forearm — the "limp" drooping hand in
+        #     "ironing", deviation flipping radial↔ulnar, and "Good,
+        #     Thank You" bending down instead of inward.  It is ALSO what
+        #     the Fix-12 "empirical" palm/thumb sign calibrations were
+        #     unknowingly compensating for; with the transfer fixed, the
+        #     LH-encoding negations from Fix 10/11 are restored and theory
+        #     finally agrees with the screen.
+        #
+        #   * Fix 17 — the old code derived bone directions by pulling the
+        #     child ray back through the joint's REST quat before applying
+        #     the world quat (wq · rest⁻¹).  A child joint's local position
+        #     is expressed in the parent's POST-transform frame, so the
+        #     correct world ray is just wq.xform(child_local) — the extra
+        #     rest-conjugate baked a constant ~9.8° error into the frame
+        #     (measured: quat-derived ray vs true joint-position ray =
+        #     9.8°; plain transform = 0.0°).  Using positions of the
+        #     exposed joints sidesteps quat conventions entirely AND makes
+        #     this recipe self-evidently identical to the capture side.
         fa_jn = f"FK-Forearm.{side}"
-        fa_rest = self._rest_of(fa_jn)
-        fa_wq = _q(self._wj(fa_jn).getQuat(self.actor)) # type: ignore
-        rig_fa_fwd = _norm(fa_wq.xform(fa_rest.quat.conjugate().xform(
-            _norm(self._lj(f"FK-Hand.{side}").getPos()) or Vec3(0, 0, 1) # type: ignore
-        )))
         ua_jn = f"FK-Upperarm.{side}"
-        ua_wq = _q(self._wj(ua_jn).getQuat(self.actor)) # type: ignore
-        rig_ua_child = _norm(self._lj(fa_jn).getPos()) or Vec3(0, 0, 1) # type: ignore
-        rig_ua_dir = _norm(ua_wq.xform(_q(self._rest_of(ua_jn).quat).conjugate().xform(rig_ua_child)))
+        rig_shoulder = self._wj(ua_jn).getPos(self.actor) # type: ignore
+        rig_elbow = self._wj(fa_jn).getPos(self.actor) # type: ignore
+        rig_wrist = self._wj(hand_jn).getPos(self.actor) # type: ignore
+        rig_fa_fwd = _norm(rig_wrist - rig_elbow)
+        rig_ua_dir = _norm(rig_shoulder - rig_elbow)
         if rig_fa_fwd is None or rig_ua_dir is None:
             return
         rig_fa_basis = _build_basis(rig_fa_fwd, rig_ua_dir)
@@ -909,7 +1414,9 @@ class CSVRigAnimator:
 
         tgt_fwd = _norm(_basis_to_world(hfwd_local, rig_fa_basis))
         tgt_across = _norm(_basis_to_world(hacross_local, rig_fa_basis))
-        if tgt_fwd is None or tgt_across is None:
+        # Fix 4: independently-derived palm target (sign-correct under reflection).
+        tgt_palm = _norm(_basis_to_world(hpalm_local, rig_fa_basis))
+        if tgt_fwd is None or tgt_across is None or tgt_palm is None:
             return
         tgt_basis = _build_basis(tgt_fwd, tgt_across)
         if tgt_basis is None:
@@ -922,35 +1429,112 @@ class CSVRigAnimator:
         if r0 is None or r1 is None:
             return
 
+        # Fix 2: split offset_q into swing (→ hand joint) and twist (→ forearm joint).
+        #
+        # History:
+        #   Fix 0 (original) — stripped twist entirely: palm orientation lost because
+        #     the arm chain's _rot_between is zero-twist by construction, so
+        #     pronation/supination had nowhere to live.
+        #   Fix 1 — full offset_q on the hand: palm orientation now reached the rig,
+        #     but the hand joint absorbing the full twist caused wrist-mesh "braiding"
+        #     and exaggerated bend during large pronation angles.
+        #   Fix 2 (this) — swing on hand, twist on forearm. Equivalent end-effector
+        #     world orientation by associativity:
+        #         hand_rest * (swing * twist) * fa_local * upperarm_wq
+        #       = hand_rest * swing * (twist * fa_local) * upperarm_wq
+        #     so pre-multiplying the forearm's local quat by twist_q shifts the twist
+        #     up one joint without changing the hand's visible orientation. This spreads
+        #     the twist across more of the arm mesh instead of concentrating it at the
+        #     wrist. Axis for decomposition is forearm.rest_dir_local because offset_q
+        #     is expressed in the forearm's pre-rest local frame.
+        #   Fix 13 — twist split FOREARM_TWIST_RATIO/(1−ratio) between forearm and
+        #     hand: all-at-the-elbow pinched the elbow mesh the same way
+        #     all-at-the-wrist braided the wrist.  See _quat_fraction.
         twist_axis_parent = _norm(self.arm_ctrls[side]["Forearm"].rest_dir_local) or Vec3(0, 0, 1)
         palm_local = self._hand_basis_in_fk_local[side][2]
         new_q = hand_rest.quat
+        new_twist_q: Quat | None = None
         best_score = -2.0
         for cand_across in (tgt_basis[1], tgt_basis[1] * -1.0):
             delta = _rot_from_basis(r0, r1, tgt_basis[0], cand_across)
             full_q = rest_wq * delta * parent_wq.conjugate()
             offset_q = hand_rest.quat.conjugate() * full_q
             swing_q = _remove_twist_from_offset(offset_q, twist_axis_parent)
-            cand_q = hand_rest.quat * swing_q
-            cand_world_q = cand_q * parent_wq
+            twist_q = _extract_twist_from_offset(offset_q, twist_axis_parent)
+            # Score with the full offset — final world orientation of the hand is
+            # identical whether offset_q sits on the hand alone or is split between
+            # hand (swing) and forearm (twist).
+            cand_full_q = hand_rest.quat * offset_q
+            cand_world_q = cand_full_q * parent_wq
             cand_palm = _norm(cand_world_q.xform(palm_local))
-            score = cand_palm.dot(tgt_basis[2]) if cand_palm is not None else -1.0
+            # Score against tgt_palm = +R̂(cap col2) — the empirically
+            # verified palm target (see the Fix 4/10/12 note above).  The
+            # winner is the candidate whose palm faces where the captured
+            # palm faced.
+            score = cand_palm.dot(tgt_palm) if cand_palm is not None else -1.0
             if score > best_score:
                 best_score = score
-                new_q = cand_q
+                # Fix 13: keep (1 − FOREARM_TWIST_RATIO) of the twist on
+                # the hand joint and route the rest to the forearm.  Same
+                # end-effector orientation (same-axis fractions commute):
+                #   swing · twist_hand · twist_fa == swing · twist == offset
+                twist_hand = _quat_fraction(twist_q, 1.0 - FOREARM_TWIST_RATIO)
+                new_q = hand_rest.quat * (swing_q * twist_hand)
+                new_twist_q = _quat_fraction(twist_q, FOREARM_TWIST_RATIO)
 
-        # Temporal smoothing with outlier rejection
+        self.debug_hand[side] = {
+            "tgt_fwd": _v(tgt_fwd), "tgt_palm": _v(tgt_palm),
+            "best_score": best_score,
+        }
+
+        # Temporal smoothing with outlier rejection.
+        #
+        # Fix 9: the rejection branch used to simply `return`, which never
+        # updates _prev_hand_quats — so after ONE spurious frame (or one
+        # genuinely fast wrist reorientation, e.g. a quick pronation flip)
+        # every later frame was also >45° from the stale `prev` and was
+        # rejected too: the wrist froze at its old orientation for the rest
+        # of the clip.  Track consecutive rejections and, after
+        # HAND_GATE_MAX_REJECTS in a row, accept the new target as the real
+        # signal (snap `prev` to it) instead of rejecting forever.
         prev = self._prev_hand_quats.get(side)
         if prev is not None:
             if abs(prev.dot(new_q)) < math.cos(math.radians(45)):
-                return
-            new_q = _q(prev + (new_q - prev) * HAND_QUAT_BLEND_ALPHA)
+                rejects = self._hand_gate_rejects.get(side, 0) + 1
+                if rejects < HAND_GATE_MAX_REJECTS:
+                    self._hand_gate_rejects[side] = rejects
+                    return
+                # Sustained disagreement — the capture really did move.
+                # Fall through and accept (blended) to re-converge.
+            self._hand_gate_rejects[side] = 0
+            # Fix 19: velocity-adaptive nlerp weight (quat angle = 2·acos|dot|).
+            step = math.degrees(2.0 * math.acos(_clamp(abs(prev.dot(new_q)), 0.0, 1.0)))
+            new_q = _q(prev + (new_q - prev) * _adaptive_alpha(step))
             if new_q.lengthSquared() > EPSILON:
                 new_q.normalize()
             else:
                 return
         self._prev_hand_quats[side] = _q(new_q)
         self._cur_quats[hand_jn] = new_q
+
+        # Route the twist component to the forearm joint (see fix 2 comment above).
+        # Pre-multiplying twist_q onto fa_local applies the twist in the forearm's
+        # pre-rest local frame, which is the same frame offset_q was decomposed in.
+        # Temporal smoothing: blend the twist against the previous frame's twist to
+        # match the hand joint's blending cadence.
+        if new_twist_q is not None:
+            fa_local = self._cur_quats.get(fa_jn)
+            if fa_local is not None:
+                prev_twist = self._prev_forearm_twists.get(side)
+                if prev_twist is not None:
+                    step = math.degrees(2.0 * math.acos(
+                        _clamp(abs(prev_twist.dot(new_twist_q)), 0.0, 1.0)))
+                    blended = _q(prev_twist + (new_twist_q - prev_twist) * _adaptive_alpha(step))
+                    if blended.lengthSquared() > EPSILON:
+                        blended.normalize()
+                        new_twist_q = blended
+                self._prev_forearm_twists[side] = _q(new_twist_q)
+                self._cur_quats[fa_jn] = _q(new_twist_q * fa_local)
 
     # ------------------------------------------------------------------
     # Finger FK
@@ -978,6 +1562,30 @@ class CSVRigAnimator:
         cur_basis = self._current_hand_basis(side)
         hand_wq = _q(self._wj(f"FK-Hand.{side}").getQuat(self.actor)) # type: ignore
         in_cap = _world_to_basis(seg_dirs[0], cap_basis)
+        # Fix 19: clamp the palm-ward component (see THUMB_PALM_MAX_COMPONENT).
+        # Applied to the pre-negation value's magnitude via the normalised
+        # direction below, after the Fix-11 sign flip.
+        # Fix 11 (restored by Fix 16): negate the palm-normal component.
+        # cap_basis[2] decodes to the BACK of the hand (the left-handed
+        # capture encoding negates numeric cross products) while the rig's
+        # col2 is PALM-facing (verified by the thumb-joint probe), so the
+        # third component must flip or the thumb mirrors through the palm
+        # plane.  This was reverted during the Fix-12 era because the hand
+        # orientation it was judged against carried a hidden 180° twist
+        # flip (see Fix 16 in _update_hand_pose) — thumb observations made
+        # against that flipped hand were unreliable.  With the transfer
+        # fixed, the encoding logic applies as originally derived.
+        in_cap = Vec3(in_cap.x, in_cap.y, -in_cap.z)
+        in_cap_n = _norm(in_cap)
+        if in_cap_n is not None and in_cap_n.z > THUMB_PALM_MAX_COMPONENT:
+            # Rebuild the direction with the palm-ward component capped and
+            # the in-palm-plane direction preserved.
+            in_plane = _norm(Vec3(in_cap_n.x, in_cap_n.y, 0.0))
+            if in_plane is not None:
+                k = math.sqrt(max(EPSILON, 1.0 - THUMB_PALM_MAX_COMPONENT ** 2))
+                in_cap = Vec3(
+                    in_plane.x * k, in_plane.y * k, THUMB_PALM_MAX_COMPONENT,
+                )
         tgt_base = _norm(_basis_to_world(in_cap, cur_basis))
         if tgt_base is None:
             return
@@ -1082,6 +1690,13 @@ class CSVRigAnimator:
         if self._last_frame is not None and fi < self._last_frame:
             self._clear_temporal()
             self._reset_pose()
+            # Fix 20b: _reset_pose() puts EVERY joint back to rest, which is
+            # A/T-pose-like — on loop wrap the tucked idle arms snapped back
+            # out sideways because the idle pose was only applied once in
+            # set_clip.  Re-apply it whenever the pose is reset.
+            for side in SIDES:
+                if not self._side_active.get(side, True):
+                    self._apply_idle_side(side)
             self._freeze_all()
             self.actor.update()
         self._last_frame = fi
@@ -1097,8 +1712,10 @@ class CSVRigAnimator:
             if self._ref_torso is None:
                 self._ref_torso = self._cur_torso
 
-        # Arms
+        # Arms (Fix 19: inactive sides stay at rest — arm tucked)
         for side in SIDES:
+            if not self._side_active.get(side, True):
+                continue
             self._update_arms(side, pose_lms)
         self._freeze_joints([
             ctrl.joint_name
@@ -1106,27 +1723,93 @@ class CSVRigAnimator:
         ])
         self.actor.update()
 
-        # Hands (wrist orientation)
+        # Hands — Fix 14: two capture bases per side.
+        #   * cap_bases  — image-space hand landmarks: finger curls + thumb
+        #     (within-hand angles, insensitive to the poor monocular depth).
+        #   * pw_bases   — pose-world wrist/index/pinky stubs: WRIST
+        #     orientation (real metric depth; the image-space basis has a
+        #     systematic palm-toward-camera bias — see _target_hand_basis_pw).
         cap_bases: dict[str, tuple[Vec3, Vec3, Vec3]] = {}
+        pw_bases: dict[str, tuple[Vec3, Vec3, Vec3]] = {}
         for side in SIDES:
             hlms = hand_lms.get(side)
-            if hlms is None:
-                self._prev_hand_bases.pop(side, None)
-                continue
-            raw = self._target_hand_basis(hlms)
+            raw = self._target_hand_basis(side, hlms) if hlms is not None else None
+            raw_pw = self._target_hand_basis_pw(side, pose_lms)
+            # Fix 18: disambiguate the image-basis palm-normal sign with the
+            # metric pose-stub basis.  The image basis col2 depends on
+            # MediaPipe's weak monocular hand z, and a single bad frame at a
+            # stabiliser (re)start could LOCK the 180°-flipped state via
+            # _stabilize_basis's continuity rule for the rest of the clip
+            # (measured on "Acquire": raw basis wrong on 4/32 left-hand
+            # frames, stabilised basis wrong on 32/32).  A flipped basis
+            # silently violates the Fix-7 side convention, and its one
+            # sign-critical consumer is the THUMB transfer — symptom: thumb
+            # folded into / poking through the hand, typically one-sided
+            # and clip-dependent.  Both bases build col2 with the same
+            # recipe and convention, so a direct dot comparison per frame
+            # keeps the image basis honest; the stabiliser flip rule
+            # remains only as a fallback when the pose stubs are missing.
+            if raw is not None and raw_pw is not None and raw[2].dot(raw_pw[2]) < 0.0:
+                raw = (raw[0], raw[1] * -1.0, raw[2] * -1.0)
             if raw is None:
                 self._prev_hand_bases.pop(side, None)
-                continue
-            cap_bases[side] = self._stabilize_basis(side, raw)
+            else:
+                cap_bases[side] = self._stabilize_basis(side, raw)
+            if raw_pw is None:
+                self._prev_hand_bases.pop(f"{side}#pw", None)
+            else:
+                pw_bases[side] = self._stabilize_basis(f"{side}#pw", raw_pw)
 
         for side in SIDES:
-            hlms = hand_lms.get(side)
-            cb = cap_bases.get(side)
-            if hlms is None or cb is None:
+            if not self._side_active.get(side, True):
                 continue
-            self._update_hand_pose(side, hlms, cb, pose_lms)
+            # Wrist target: prefer the pose-world stub basis; fall back to
+            # the image-space basis only when the stubs are missing.
+            wb = pw_bases.get(side) or cap_bases.get(side)
+            if wb is None:
+                continue
+            self._update_hand_pose(side, wb, pose_lms)
 
-        hand_joints = [f"FK-Hand.{s}" for s in SIDES]
+        # Fix 5: re-freeze the FOREARM joints together with the hand joints.
+        #
+        # Root cause of the "palms face the camera" family of bugs
+        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        # Fix 2 split the wrist offset into swing (hand joint) + twist
+        # (forearm joint):  _update_hand_pose writes the twist into
+        # self._cur_quats["FK-Forearm.*"].  But the forearm was frozen
+        # during the ARM pass above — BEFORE the hand pass computed the
+        # twist — and this freeze call only re-applied the hand joints.
+        # The twist was therefore computed, smoothed, stored… and then
+        # overwritten by the next frame's _update_arms without EVER being
+        # applied to the rig.  The entire pronation/supination channel was
+        # silently discarded since Fix 2 landed.
+        #
+        # That explains every observed symptom:
+        #   * "binoculars" — the roll that turns the palms inward is pure
+        #     twist → dropped, palms stay camera-facing; and with the palm
+        #     reference ~90° off, captured flexion/extension shows up as
+        #     ulnar/radial deviation at the wrist.
+        #   * "choke" / "Good, thank you" — swing-only orientation looks
+        #     nearly right from the front but the missing roll appears as a
+        #     radial (thumb-side) lean from a side view / palm-out error.
+        #   * Fixes 3 and 4 produced no visible change — both altered which
+        #     candidate palm orientation wins, but candidates differ by a
+        #     rotation about the forearm axis, i.e. almost entirely in the
+        #     discarded twist channel.  The applied swing barely changed.
+        #
+        # Why re-freezing the forearm here is safe and exact:
+        #   * hand_world = hand_rest·swing·twist·fa_local·ua_world
+        #     = hand_rest·offset·parent_world — associativity means freezing
+        #     both joints together reproduces the full target orientation
+        #     computed against the PRE-twist parent (see Fix 2 note in
+        #     _update_hand_pose).
+        #   * The twist axis is the forearm→hand direction expressed in the
+        #     forearm's local frame, so twist.xform(hand_pos) == hand_pos:
+        #     the wrist's world POSITION is unchanged; the forearm purely
+        #     rolls about its own long axis (anatomically correct pronation).
+        #   * For sides with no hand landmarks this re-freezes the arm-pass
+        #     value unchanged (no twist was written) — a harmless no-op.
+        hand_joints = [f"FK-Hand.{s}" for s in SIDES] + [f"FK-Forearm.{s}" for s in SIDES]
         self._freeze_joints(hand_joints)
         self.actor.update()
 

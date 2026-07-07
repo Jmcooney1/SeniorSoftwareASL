@@ -38,7 +38,6 @@ class SignPlayerWidget(QWidget):
 
         self._base = None             # ShowBase instance (when embedded)
         self._animator = None         # CSVRigAnimator
-        self._sign_hud = None
         self._camera_ctrl = None
         self._debug_viz = None
         self._pose_ctrl = None
@@ -102,7 +101,6 @@ class SignPlayerWidget(QWidget):
                 pass
             self._base = None
             self._animator = None
-            self._sign_hud = None
             self._camera_ctrl = None
             self._debug_viz = None
             self._pose_ctrl = None
@@ -181,7 +179,6 @@ class SignPlayerWidget(QWidget):
             create_animator,
             create_camera_controller,
             create_character_pose_controller,
-            create_sign_hud,
             frame_camera,
             load_actor,
             setup_lighting,
@@ -223,12 +220,9 @@ class SignPlayerWidget(QWidget):
         except Exception:
             pose_ctrl = None
 
-        sign_hud = create_sign_hud(base, animator)
-
         # Store everything so we can hot-swap / tear down later
         self._base = base
         self._animator = animator
-        self._sign_hud = sign_hud
         self._camera_ctrl = camera_ctrl
         self._debug_viz = debug_viz
         self._pose_ctrl = pose_ctrl
@@ -283,11 +277,9 @@ class SignPlayerWidget(QWidget):
         self._ensure_panda_path()
 
         from animation import CSVSignClip
-        from panda_core import update_sign_hud
 
         clip = CSVSignClip(csv_path)
         self._animator.set_clip(clip)
-        update_sign_hud(self._sign_hud, self._animator)
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)

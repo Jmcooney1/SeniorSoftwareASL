@@ -12,8 +12,7 @@ from direct.showbase.ShowBase import ShowBase
 from david_module.panda_port.panda_core import (
     load_actor, setup_lighting, frame_camera,
     create_animator, create_camera_controller,
-    create_sign_hud, create_character_pose_controller,
-    update_sign_hud,
+    create_character_pose_controller,
     CAMERA_FOV_DEGREES, CAMERA_NEAR, CAMERA_FAR,   # ← import the constants
     camera_position, camera_target_point,           # ← import helpers
 )
@@ -52,7 +51,6 @@ class _PandaWorld(ShowBase):
 
         self.animator = create_animator(self.character, csv_path)
         self.taskMgr.add(self.animator.update, "animator")
-        self.hud = create_sign_hud(self, self.animator)
 
         try:
             self.pose_ctrl = create_character_pose_controller(
@@ -77,7 +75,6 @@ class _PandaWorld(ShowBase):
     def play_sign(self, csv_path: Path) -> None:
         from david_module.panda_port.animation import CSVSignClip
         self.animator.set_clip(CSVSignClip(csv_path))
-        update_sign_hud(self.hud, self.animator)
 
     def reframe_for_size(self, width: int, height: int) -> None:
         """
